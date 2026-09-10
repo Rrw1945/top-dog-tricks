@@ -1,0 +1,103 @@
+name: Native process identity probes
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-process-identity.yml"
+      - ".github/workflows/frontend-typecheck-refresh.yml"
+      - "package.json"
+      - "scripts/check-api-typecheck-rebuilds-db.mjs"
+      - "scripts/check-node-support-matrix.mjs"
+      - "scripts/check-node-support-matrix.test.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/native-process-identity.yml"
+      - ".github/workflows/frontend-typecheck-refresh.yml"
+      - "package.json"
+      - "scripts/check-api-typecheck-rebuilds-db.mjs"
+      - "scripts/check-node-support-matrix.mjs"
+      - "scripts/check-node-support-matrix.test.mjs"
+  schedule:
+    # Recheck hosted runner and runtime behavior even when the source is unchanged.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  process-identity:
+    name: ${{ matrix.host }} Node.js ${{ matrix.node }} identity probe
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: macOS
+            os: macos-latest
+            node: 22
+          - host: macOS
+            os: macos-latest
+            node: 24
+          - host: Windows
+            os: windows-latest
+            node: 22
+          - host: Windows
+            os: windows-latest
+            node: 24
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    env:
+      API_TYPECHECK_NATIVE_TEST_HOST: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - name: Run Node support matrix regression tests
+        id: node-support-matrix-tests
+        run: pnpm run test:node-support-matrix
+      - name: Verify Node support matches the CI matrix
+        id: node-support-matrix-contract
+        run: pnpm run check:node-support-matrix
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} stale lock takeover
+        id: native-process-identity
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} frozen probe timeout
+        id: native-process-identity-timeout
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-timeout
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} frozen probe descendant cleanup
+        id: native-process-identity-descendant-lifecycle
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-descendant-lifecycle
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} PID-reuse recovery safety
+        id: native-process-identity-recovery
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:recovery
+      - name: Record failed native probe before diagnostics collection
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        continue-on-error: true
+        env:
+          API_TYPECHECK_NATIVE_PROBE_FAILURE: >-
+            ${{ steps.node-support-matrix-tests.outcome == 'failure' && 'node-support-matrix-tests' ||
+                steps.node-support-matrix-contract.outcome == 'failure' && 'node-support-matrix-contract' ||
+                steps.native-process-identity.outcome == 'failure' && 'stale-lock-takeover' ||
+                steps.native-process-identity-timeout.outcome == 'failure' && 'frozen-probe-timeout' ||
+                steps.native-process-identity-descendant-lifecycle.outcome == 'failure' && 'frozen-probe-descendant-cleanup' ||
+                steps.native-process-identity-recovery.outcome == 'failure' && 'pid-reuse-recovery' ||
+                'unknown' }}
+        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --record-native-process-probe-failure
+      - name: Collect hosted-runner diagnostics after scheduled failure
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        continue-on-error: true
+        env:
+          API_TYPECHECK_NATIVE_DIAGNOSTICS_DIR: ${{ runner.temp }}/native-process-diagnostics
+        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --collect-native-process-diagnostics
+      - name: Upload hosted-runner diagnostics
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-process-diagnostics-${{ matrix.os }}-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/native-process-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14

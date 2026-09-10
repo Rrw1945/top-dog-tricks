@@ -1,0 +1,59 @@
+name: Frontend API type refresh
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/frontend-typecheck-refresh.yml"
+      - ".github/workflows/native-process-identity.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/check-node-support-matrix.mjs"
+      - "scripts/check-node-support-matrix.test.mjs"
+      - "scripts/check-frontend-typecheck-refreshes-api-client.mjs"
+      - "artifacts/top-dog-tricks/**"
+      - "lib/api-client-react/**"
+      - "lib/api-spec/**"
+      - "tsconfig*.json"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/frontend-typecheck-refresh.yml"
+      - ".github/workflows/native-process-identity.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/check-node-support-matrix.mjs"
+      - "scripts/check-node-support-matrix.test.mjs"
+      - "scripts/check-frontend-typecheck-refreshes-api-client.mjs"
+      - "artifacts/top-dog-tricks/**"
+      - "lib/api-client-react/**"
+      - "lib/api-spec/**"
+      - "tsconfig*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-typecheck-refresh:
+    name: Refresh API client declarations during frontend typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Verify Node support matches all CI workflows
+        run: pnpm run check:node-support-matrix
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify frontend typecheck refreshes API client declarations
+        run: pnpm run check:frontend-typecheck-refreshes-api-client
