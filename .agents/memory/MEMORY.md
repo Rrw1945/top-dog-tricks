@@ -1,0 +1,4 @@
+- [Orval, Zod, and resolver compatibility](orval-zod-compatibility.md) — generated schemas and browser form resolvers must both support the workspace Zod major version.
+- [Generated-output harness locking](generated-output-harness-locking.md) — protect restore verification too; stale reclamation requires owner identity and serialized transitions.
+- [Ambiguous email delivery retries](ambiguous-email-delivery-retries.md) — reuse one persisted link and idempotency identity after uncertain provider outcomes.
+- [Welcome lease clock authority](welcome-lease-clock-authority.md) — compare recovery leases with PostgreSQL time, never an application clock.
