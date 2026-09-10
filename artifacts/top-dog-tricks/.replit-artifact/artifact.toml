@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Top Dog Tricks"
+description = "A full-stack dog trick contest platform where owners submit videos with a digital signature and admins review, edit, approve, or reject entries."
+version = "1.0.0"
+id = "artifacts/top-dog-tricks"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23591
+
+[services.development]
+run = "pnpm --filter @workspace/top-dog-tricks run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/top-dog-tricks", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/top-dog-tricks/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23591"
+BASE_PATH = "/"

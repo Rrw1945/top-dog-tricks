@@ -1,0 +1,34 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.0.0 || ^24.0.0"
+  },
+  "scripts": {
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "check:api-typecheck-rebuilds-db": "node ./scripts/check-api-typecheck-rebuilds-db.mjs",
+    "check:api-typecheck-rebuilds-libs:failure": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --expect-validation-failure",
+    "check:api-typecheck-rebuilds-libs:concurrency": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-concurrent-runs",
+    "check:api-typecheck-rebuilds-libs:interruption": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-interrupted-recovery",
+    "check:api-typecheck-rebuilds-libs:process-identity": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-process-identity",
+    "check:api-typecheck-rebuilds-libs:process-identity:native": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-native-process-identity",
+    "check:api-typecheck-rebuilds-libs:process-identity:native-timeout": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-native-process-identity-timeout",
+    "check:api-typecheck-rebuilds-libs:process-identity:native-descendant-lifecycle": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-native-process-identity-descendant-lifecycle",
+    "check:api-typecheck-rebuilds-libs:process-identity:recovery": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-unsafe-recovery-manifests",
+    "check:api-typecheck-rebuilds-libs:unsafe-recovery": "node ./scripts/check-api-typecheck-rebuilds-db.mjs --test-unsafe-recovery-manifests",
+    "check:api-typecheck-rebuilds-libs": "node ./scripts/check-api-typecheck-rebuilds-db.mjs",
+    "check:frontend-typecheck-refreshes-api-client": "node ./scripts/check-frontend-typecheck-refreshes-api-client.mjs",
+    "check:node-support-matrix": "node ./scripts/check-node-support-matrix.mjs",
+    "test:node-support-matrix": "node --test ./scripts/check-node-support-matrix.test.mjs",
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+  },
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "typescript": "~5.9.3"
+  }
+}

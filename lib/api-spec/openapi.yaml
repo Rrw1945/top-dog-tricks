@@ -1,0 +1,667 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: storage
+    description: Persistent media uploads
+  - name: submissions
+    description: Contest entries and admin review
+  - name: admin
+    description: Admin access and dashboard
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /storage/uploads/request-url:
+    post:
+      operationId: requestUploadUrl
+      tags: [storage]
+      summary: Request a direct upload URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadRequest"
+      responses:
+        "200":
+          description: Upload URL created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResponse"
+        "400":
+          description: Invalid upload metadata
+  /storage/objects/{objectPath}:
+    get:
+      operationId: getStoredObject
+      tags: [storage]
+      summary: Serve a stored media object
+      parameters:
+        - name: objectPath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stored object
+          content:
+            application/octet-stream: {}
+        "404":
+          description: Object not found
+  /submissions:
+    get:
+      operationId: listSubmissions
+      tags: [submissions]
+      summary: List contest submissions for the admin
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/SubmissionStatus"
+      responses:
+        "200":
+          description: Submission list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Submission"
+        "401":
+          description: Admin authentication required
+    post:
+      operationId: createSubmission
+      tags: [submissions]
+      summary: Create a new contest submission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmissionInput"
+      responses:
+        "201":
+          description: Submission created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+        "400":
+          description: Invalid submission
+  /submissions/{id}:
+    get:
+      operationId: getSubmission
+      tags: [submissions]
+      summary: Get a submission for the admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Submission detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+        "401":
+          description: Admin authentication required
+        "404":
+          description: Submission not found
+    patch:
+      operationId: updateSubmission
+      tags: [submissions]
+      summary: Update submission review status or punchline
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmissionUpdate"
+      responses:
+        "200":
+          description: Submission updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+        "401":
+          description: Admin authentication required
+        "404":
+          description: Submission not found
+  /submissions/{id}/analyze:
+    post:
+      operationId: analyzeSubmission
+      tags: [submissions]
+      summary: Analyze a submission video and suggest action trim points and punchlines
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Submission with AI review suggestions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Submission"
+        "401":
+          description: Admin authentication required
+        "404":
+          description: Submission not found
+        "409":
+          description: Another active or replacement analysis run owns this submission
+        "500":
+          description: Video analysis failed
+  /showcase:
+    get:
+      operationId: listShowcaseEntries
+      tags: [submissions]
+      summary: List approved entries for the public showcase
+      responses:
+        "200":
+          description: Approved contest entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShowcaseEntry"
+  /showcase/{id}/like:
+    post:
+      operationId: toggleShowcaseLike
+      tags: [engagement]
+      summary: Toggle an anonymous browser like on an approved video
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShowcaseLikeInput"
+      responses:
+        "200":
+          description: Updated like state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShowcaseLike"
+        "404":
+          description: Approved video not found
+  /subscribers:
+    post:
+      operationId: createSubscriber
+      tags: [engagement]
+      summary: Request an email subscription confirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriberInput"
+      responses:
+        "202":
+          description: Confirmation email requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriberStatus"
+  /subscribers/resend:
+    post:
+      operationId: resendSubscriberConfirmation
+      tags: [engagement]
+      summary: Request a replacement subscription confirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriberConfirmationResendInput"
+      responses:
+        "202":
+          description: Replacement request accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriberStatus"
+  /subscribers/verify:
+    get:
+      operationId: verifySubscriber
+      tags: [engagement]
+      summary: Confirm an email subscription
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Subscription confirmed
+          content:
+            text/html:
+              schema:
+                type: string
+  /subscribers/unsubscribe:
+    get:
+      operationId: unsubscribeSubscriber
+      tags: [engagement]
+      summary: Unsubscribe an email address
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Subscription removed
+          content:
+            text/html:
+              schema:
+                type: string
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [admin]
+      summary: Get submission counts for the admin dashboard
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+        "401":
+          description: Admin authentication required
+  /admin/login:
+    post:
+      operationId: adminLogin
+      tags: [admin]
+      summary: Start an admin session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminLoginInput"
+      responses:
+        "200":
+          description: Admin session started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+        "401":
+          description: Invalid password
+  /admin/logout:
+    post:
+      operationId: adminLogout
+      tags: [admin]
+      summary: End an admin session
+      responses:
+        "200":
+          description: Admin session ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+  /admin/session:
+    get:
+      operationId: getAdminSession
+      tags: [admin]
+      summary: Check the current admin session
+      responses:
+        "200":
+          description: Current admin session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    UploadRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        size:
+          type: integer
+          minimum: 1
+        contentType:
+          type: string
+          minLength: 1
+      required: [name, size, contentType]
+    UploadResponse:
+      type: object
+      properties:
+        uploadURL:
+          type: string
+          format: uri
+        objectPath:
+          type: string
+      required: [uploadURL, objectPath]
+    SubmissionStatus:
+      type: string
+      enum: [pending, approved, needs_edit, rejected]
+    SubmissionInput:
+      type: object
+      properties:
+        ownerName:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+        phone:
+          type: ["string", "null"]
+        dogName:
+          type: string
+          minLength: 1
+        breedBio:
+          type: ["string", "null"]
+        trickName:
+          type: ["string", "null"]
+        trickDescription:
+          type: string
+          minLength: 1
+        videoObjectPath:
+          type: string
+          minLength: 1
+        videoFileName:
+          type: string
+          minLength: 1
+        videoContentType:
+          type: string
+          minLength: 1
+        signatureObjectPath:
+          type: string
+          minLength: 1
+        driveReleaseFileId:
+          type: ["string", "null"]
+        driveReleaseUrl:
+          type: ["string", "null"]
+          format: uri
+        airtableContestantId:
+          type: ["string", "null"]
+        airtableSubmissionId:
+          type: ["string", "null"]
+        processingStatus:
+          type: string
+        processedVideoObjectPath:
+          type: ["string", "null"]
+        voiceoverObjectPath:
+          type: ["string", "null"]
+        processingError:
+          type: ["string", "null"]
+      required:
+        - ownerName
+        - email
+        - dogName
+        - trickDescription
+        - videoObjectPath
+        - videoFileName
+        - videoContentType
+        - signatureObjectPath
+    Submission:
+      type: object
+      properties:
+        id:
+          type: integer
+        ownerName:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        dogName:
+          type: string
+        breedBio:
+          type: ["string", "null"]
+        trickName:
+          type: string
+        trickDescription:
+          type: string
+        videoObjectPath:
+          type: string
+        videoFileName:
+          type: string
+        videoContentType:
+          type: string
+        signatureObjectPath:
+          type: string
+        driveReleaseFileId:
+          type: ["string", "null"]
+        driveReleaseUrl:
+          type: ["string", "null"]
+          format: uri
+        airtableContestantId:
+          type: ["string", "null"]
+        airtableSubmissionId:
+          type: ["string", "null"]
+        processingStatus:
+          type: string
+        trimStartSeconds:
+          type: ["number", "null"]
+        trimEndSeconds:
+          type: ["number", "null"]
+        aiAnalysisStatus:
+          type: string
+        aiAnalysisRunId:
+          type: ["string", "null"]
+        aiAnalysisStartedAt:
+          type: ["string", "null"]
+          format: date-time
+        aiAnalysisHeartbeatAt:
+          type: ["string", "null"]
+          format: date-time
+        aiAnalysisChunksCompleted:
+          type: ["integer", "null"]
+        aiAnalysisChunksTotal:
+          type: ["integer", "null"]
+        aiTrimStartSeconds:
+          type: ["number", "null"]
+        aiTrimEndSeconds:
+          type: ["number", "null"]
+        aiDetectedAction:
+          type: ["string", "null"]
+        aiPunchlines:
+          type: ["string", "null"]
+        aiConfidence:
+          type: ["number", "null"]
+        aiAnalysisError:
+          type: ["string", "null"]
+        processedVideoObjectPath:
+          type: ["string", "null"]
+        voiceoverObjectPath:
+          type: ["string", "null"]
+        processingError:
+          type: ["string", "null"]
+        status:
+          $ref: "#/components/schemas/SubmissionStatus"
+        punchline:
+          type: ["string", "null"]
+        submittedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - ownerName
+        - email
+        - phone
+        - dogName
+        - trickName
+        - trickDescription
+        - videoObjectPath
+        - videoFileName
+        - videoContentType
+        - signatureObjectPath
+        - processingStatus
+        - aiAnalysisStatus
+        - status
+        - submittedAt
+        - updatedAt
+    SubmissionUpdate:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/SubmissionStatus"
+        punchline:
+          type: ["string", "null"]
+        trimStartSeconds:
+          type: ["number", "null"]
+          minimum: 0
+        trimEndSeconds:
+          type: ["number", "null"]
+          minimum: 0
+    ShowcaseEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        dogName:
+          type: string
+        breedBio:
+          type: ["string", "null"]
+        trickName:
+          type: string
+        trickDescription:
+          type: string
+        videoObjectPath:
+          type: string
+        processedVideoObjectPath:
+          type: ["string", "null"]
+        voiceoverObjectPath:
+          type: ["string", "null"]
+        punchline:
+          type: ["string", "null"]
+        publishedAt:
+          type: string
+          format: date-time
+        likeCount:
+          type: integer
+      required:
+        - id
+        - dogName
+        - trickName
+        - trickDescription
+        - videoObjectPath
+        - publishedAt
+        - likeCount
+    ShowcaseLikeInput:
+      type: object
+      properties:
+        browserId:
+          type: string
+          minLength: 16
+          maxLength: 128
+      required: [browserId]
+    ShowcaseLike:
+      type: object
+      properties:
+        submissionId:
+          type: integer
+        liked:
+          type: boolean
+        likeCount:
+          type: integer
+      required: [submissionId, liked, likeCount]
+    SubscriberInput:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        consent:
+          type: boolean
+      required: [email, consent]
+    SubscriberConfirmationResendInput:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+      required: [email]
+    SubscriberStatus:
+      type: object
+      properties:
+        message:
+          type: string
+        cohort:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+      required: [message, cohort]
+    DashboardSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+        pending:
+          type: integer
+        approved:
+          type: integer
+        needsEdit:
+          type: integer
+        rejected:
+          type: integer
+      required: [total, pending, approved, needsEdit, rejected]
+    AdminLoginInput:
+      type: object
+      properties:
+        password:
+          type: string
+          minLength: 1
+      required: [password]
+    AdminSession:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+      required: [authenticated]
