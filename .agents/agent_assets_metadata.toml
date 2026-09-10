@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "RDidTko8zCaA5JQXj6Wyz"
+uri = "file://.agents/outputs/spot-finished.mp4"
+type = "video"
+title = "Spot — Finished processed video"
+description = "The completed 1080×1920 processed MP4 from Top Dog Tricks submission #1."
+logical_id = "34d964d2-00b0-47bb-946c-f82d74793fe0"
+content_hash = "sha256:8a11ac3936ad839def3abdcd4c1775e926214c8b748d76fa70093c70c20475a6"
+size = 8053260
+mtime_ms = 1788381056900
+storage_uri = "gcs://replit-rams-assets-reed/rams/assets/repl:39e6427c-2934-4c24-aaf8-22edf2995a79/34d964d2-00b0-47bb-946c-f82d74793fe0/87ee05a3-5697-451f-ab50-e033897a5fe5"
+storage_version_token = "1788381061768480"
+content_type = "video/mp4"
