@@ -1,5 +1,17 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, count, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gt,
+  isNotNull,
+  isNull,
+  lte,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import { Router, type IRouter, type RequestHandler } from "express";
 import {
   CreateSubscriberBody,
@@ -16,6 +28,7 @@ import { db, subscribersTable, submissionsTable, videoLikesTable } from "@worksp
 import { getPublicBaseUrl } from "../lib/integrations";
 import {
   EmailDeliveryError,
+  classifyEmailDeliveryFailure,
   createSubscriptionWelcomeIdempotencyKey,
   sendSubscriptionConfirmation,
   sendSubscriptionWelcome,
@@ -28,11 +41,50 @@ import {
   readConfirmationTokenMetadata,
   readUnsubscribeToken,
 } from "../lib/subscriberTokens";
+import { getNewsletterFunnelReport } from "../lib/newsletterFunnelAnalytics";
 
 const router: IRouter = Router();
 export const SUBSCRIBER_CONFIRMATION_RESEND_COOLDOWN_MS = 15 * 60 * 1_000;
 export const WELCOME_EMAIL_CLAIM_LEASE_MS = 15 * 60 * 1_000;
 export const WELCOME_EMAIL_RECOVERY_BATCH_SIZE = 50;
+export const WELCOME_EMAIL_RECOVERY_WARNING_AGE_MS = 2 * 60 * 1_000;
+export const WELCOME_EMAIL_RECOVERY_REPEATED_FAILURE_ATTEMPTS = 3;
+export const WELCOME_EMAIL_ADMIN_DEFAULT_PAGE_SIZE = 50;
+export const WELCOME_EMAIL_ADMIN_MAX_PAGE_SIZE = 100;
+export type WelcomeEmailAdminStatus =
+  | "active_claim"
+  | "expired_claim"
+  | "failed"
+  | "permanently_failed";
+export type WelcomeEmailAdminRecord = {
+  id: number;
+  email: string;
+  status: WelcomeEmailAdminStatus;
+  claimedAt: Date | null;
+  failedAt: Date | null;
+  lastError: string | null;
+  attemptCount: number;
+};
+export type WelcomeEmailAdminPage = {
+  records: WelcomeEmailAdminRecord[];
+  nextCursor: string | null;
+  backlog: WelcomeEmailAdminBacklog;
+};
+export type WelcomeEmailRecoveryState = "clear" | "healthy" | "attention";
+export type WelcomeEmailAdminBacklog = {
+  retryableCount: number;
+  oldestRetryAt: Date | null;
+  oldestRetryAgeMinutes: number | null;
+  repeatedFailureCount: number;
+  state: WelcomeEmailRecoveryState;
+};
+
+export { getNewsletterFunnelReport };
+
+export type DeferredConfirmationAdminStatus = {
+  deferredCount: number;
+  nextRetryAt: Date | null;
+};
 type SendSubscriptionWelcome = typeof sendSubscriptionWelcome;
 type FinalizeSubscriberWelcome = (
   subscriberId: number,
@@ -43,6 +95,10 @@ type ReplacementVerificationClaim = {
   tokenHash: string;
   attemptId: string;
   claimedAt: Date;
+};
+type SubscriberConfirmationReplacementResult = {
+  cohort: string | null;
+  sent: boolean;
 };
 
 function hash(value: string): string {
@@ -225,6 +281,183 @@ export async function recoverWelcomeEmails(
   }
 }
 
+export function classifyWelcomeEmailBacklog({
+  retryableCount,
+  oldestRetryAgeMinutes,
+  repeatedFailureCount,
+}: Pick<
+  WelcomeEmailAdminBacklog,
+  "retryableCount" | "oldestRetryAgeMinutes" | "repeatedFailureCount"
+>): WelcomeEmailRecoveryState {
+  if (retryableCount === 0) return "clear";
+  if (
+    retryableCount > WELCOME_EMAIL_RECOVERY_BATCH_SIZE ||
+    (oldestRetryAgeMinutes !== null &&
+      oldestRetryAgeMinutes * 60 * 1_000 >=
+        WELCOME_EMAIL_RECOVERY_WARNING_AGE_MS) ||
+    repeatedFailureCount > 0
+  ) {
+    return "attention";
+  }
+  return "healthy";
+}
+
+export async function getWelcomeEmailAdminBacklog(): Promise<WelcomeEmailAdminBacklog> {
+  const { rows } = await db.execute<{
+    retryableCount: number | string;
+    oldestRetryAt: Date | null;
+    repeatedFailureCount: number | string;
+  }>(sql`
+    WITH retryable AS (
+      SELECT
+        COALESCE(welcome_email_failed_at, welcome_email_claimed_at) AS retry_at,
+        welcome_email_attempt_count
+      FROM subscribers
+      WHERE verified_at IS NOT NULL
+        AND unsubscribed_at IS NULL
+        AND welcome_email_status = 'failed'
+      UNION ALL
+      SELECT
+        welcome_email_claimed_at AS retry_at,
+        welcome_email_attempt_count
+      FROM subscribers
+      WHERE verified_at IS NOT NULL
+        AND unsubscribed_at IS NULL
+        AND welcome_email_status = 'claimed'
+        AND welcome_email_claimed_at < CURRENT_TIMESTAMP
+          - (${WELCOME_EMAIL_CLAIM_LEASE_MS} * interval '1 millisecond')
+    )
+    SELECT
+      COUNT(*) AS "retryableCount",
+      MIN(retry_at) AS "oldestRetryAt",
+      COUNT(*) FILTER (
+        WHERE welcome_email_attempt_count >=
+          ${WELCOME_EMAIL_RECOVERY_REPEATED_FAILURE_ATTEMPTS}
+      ) AS "repeatedFailureCount"
+    FROM retryable
+  `);
+  const aggregate = rows[0];
+
+  const retryableCount = Number(aggregate?.retryableCount ?? 0);
+  const oldestRetryAt = aggregate?.oldestRetryAt
+    ? new Date(aggregate.oldestRetryAt)
+    : null;
+  const oldestRetryAgeMinutes = oldestRetryAt
+    ? Math.max(0, Math.floor((Date.now() - oldestRetryAt.getTime()) / 60_000))
+    : null;
+  const repeatedFailureCount = Number(aggregate?.repeatedFailureCount ?? 0);
+
+  return {
+    retryableCount,
+    oldestRetryAt,
+    oldestRetryAgeMinutes,
+    repeatedFailureCount,
+    state: classifyWelcomeEmailBacklog({
+      retryableCount,
+      oldestRetryAgeMinutes,
+      repeatedFailureCount,
+    }),
+  };
+}
+
+export async function listWelcomeEmailAdminRecords({
+  limit = WELCOME_EMAIL_ADMIN_DEFAULT_PAGE_SIZE,
+  cursor,
+}: {
+  limit?: number;
+  cursor?: string;
+} = {}): Promise<WelcomeEmailAdminPage> {
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > WELCOME_EMAIL_ADMIN_MAX_PAGE_SIZE
+  ) {
+    throw new Error("Invalid welcome email admin page size");
+  }
+
+  const cursorId = cursor === undefined ? undefined : Number(cursor);
+  if (
+    cursorId !== undefined &&
+    (!Number.isSafeInteger(cursorId) || cursorId <= 0)
+  ) {
+    throw new Error("Invalid welcome email admin cursor");
+  }
+
+  const conditions = [
+    or(
+      eq(subscribersTable.welcomeEmailStatus, "claimed"),
+      eq(subscribersTable.welcomeEmailStatus, "failed"),
+      eq(subscribersTable.welcomeEmailStatus, "permanently_failed"),
+    ),
+  ];
+  if (cursorId !== undefined) {
+    conditions.push(gt(subscribersTable.id, cursorId));
+  }
+
+  const rows = await db
+    .select({
+      id: subscribersTable.id,
+      email: subscribersTable.email,
+      status: sql<WelcomeEmailAdminStatus>`CASE
+        WHEN ${subscribersTable.welcomeEmailStatus} = 'claimed'
+          AND ${subscribersTable.welcomeEmailClaimedAt} < CURRENT_TIMESTAMP
+            - (${WELCOME_EMAIL_CLAIM_LEASE_MS} * interval '1 millisecond')
+          THEN 'expired_claim'
+        WHEN ${subscribersTable.welcomeEmailStatus} = 'claimed'
+          THEN 'active_claim'
+        WHEN ${subscribersTable.welcomeEmailStatus} = 'failed'
+          THEN 'failed'
+        WHEN ${subscribersTable.welcomeEmailStatus} = 'permanently_failed'
+          THEN 'permanently_failed'
+      END`,
+      claimedAt: subscribersTable.welcomeEmailClaimedAt,
+      failedAt: subscribersTable.welcomeEmailFailedAt,
+      lastError: subscribersTable.welcomeEmailLastError,
+      attemptCount: subscribersTable.welcomeEmailAttemptCount,
+    })
+    .from(subscribersTable)
+    .where(and(...conditions))
+    .orderBy(asc(subscribersTable.id))
+    .limit(limit + 1);
+
+  const records = rows.slice(0, limit);
+  return {
+    records,
+    nextCursor:
+      rows.length > limit
+        ? String(records[records.length - 1]?.id ?? "")
+        : null,
+    backlog: await getWelcomeEmailAdminBacklog(),
+  };
+}
+
+export async function getDeferredConfirmationAdminStatus(): Promise<DeferredConfirmationAdminStatus> {
+  const [aggregate] = await db
+    .select({
+      deferredCount: count(),
+      nextRetryAt: sql<Date | null>`MIN(${subscribersTable.replacementVerificationRetryAt})`,
+    })
+    .from(subscribersTable)
+    .where(
+      and(
+        isNull(subscribersTable.verifiedAt),
+        isNull(subscribersTable.unsubscribedAt),
+        isNotNull(subscribersTable.verificationTokenHash),
+        isNotNull(subscribersTable.replacementVerificationAttemptId),
+        gt(
+          subscribersTable.replacementVerificationRetryAt,
+          sql`CURRENT_TIMESTAMP`,
+        ),
+      ),
+    );
+
+  return {
+    deferredCount: Number(aggregate?.deferredCount ?? 0),
+    nextRetryAt: aggregate?.nextRetryAt
+      ? new Date(aggregate.nextRetryAt)
+      : null,
+  };
+}
 export async function findOrCreateSubscriberByEmail(email: string) {
   const canonicalEmail = email.trim().toLowerCase();
   const findSubscriber = () =>
@@ -265,6 +498,7 @@ export async function claimSubscriberVerification(
       email: email.trim().toLowerCase(),
       verificationTokenHash: hash(verificationToken),
       replacementVerificationAttemptId: null,
+      replacementVerificationRetryAt: null,
       unsubscribeTokenHash: hash(token()),
       verifiedAt: null,
       unsubscribedAt: null,
@@ -296,6 +530,8 @@ export async function claimReplacementSubscriberVerification(
       verificationTokenHash: subscribersTable.verificationTokenHash,
       replacementVerificationAttemptId:
         subscribersTable.replacementVerificationAttemptId,
+      replacementVerificationRetryAt:
+        subscribersTable.replacementVerificationRetryAt,
       updatedAt: subscribersTable.updatedAt,
     })
     .from(subscribersTable)
@@ -303,6 +539,7 @@ export async function claimReplacementSubscriberVerification(
       and(
         eq(subscribersTable.id, subscriberId),
         isNull(subscribersTable.verifiedAt),
+        isNull(subscribersTable.unsubscribedAt),
         isNotNull(subscribersTable.verificationTokenHash),
         sql`(
           ${subscribersTable.replacementVerificationAttemptId} is not null
@@ -319,6 +556,35 @@ export async function claimReplacementSubscriberVerification(
       pending.replacementVerificationAttemptId,
     );
     if (hash(verificationToken) !== pending.verificationTokenHash) return null;
+    const [retryClaimed] = await db
+      .update(subscribersTable)
+      .set({
+        replacementVerificationRetryAt: sql`CURRENT_TIMESTAMP + (${SUBSCRIBER_CONFIRMATION_RESEND_COOLDOWN_MS} * interval '1 millisecond')`,
+      })
+      .where(
+        and(
+          eq(subscribersTable.id, subscriberId),
+          isNull(subscribersTable.verifiedAt),
+          isNull(subscribersTable.unsubscribedAt),
+          eq(
+            subscribersTable.verificationTokenHash,
+            pending.verificationTokenHash,
+          ),
+          eq(
+            subscribersTable.replacementVerificationAttemptId,
+            pending.replacementVerificationAttemptId,
+          ),
+          or(
+            isNull(subscribersTable.replacementVerificationRetryAt),
+            lte(
+              subscribersTable.replacementVerificationRetryAt,
+              sql`CURRENT_TIMESTAMP`,
+            ),
+          ),
+        ),
+      )
+      .returning({ id: subscribersTable.id });
+    if (!retryClaimed) return null;
     return {
       token: verificationToken,
       tokenHash: pending.verificationTokenHash,
@@ -339,12 +605,14 @@ export async function claimReplacementSubscriberVerification(
       email: email.trim().toLowerCase(),
       verificationTokenHash,
       replacementVerificationAttemptId: attemptId,
+      replacementVerificationRetryAt: sql`CURRENT_TIMESTAMP + (${SUBSCRIBER_CONFIRMATION_RESEND_COOLDOWN_MS} * interval '1 millisecond')`,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
     .where(
       and(
         eq(subscribersTable.id, subscriberId),
         isNull(subscribersTable.verifiedAt),
+        isNull(subscribersTable.unsubscribedAt),
         eq(
           subscribersTable.verificationTokenHash,
           pending.verificationTokenHash,
@@ -372,7 +640,7 @@ async function requestSubscriberConfirmationReplacementWithCohort(
   email: string,
   host: string | undefined,
   sendConfirmation = sendSubscriptionConfirmation,
-): Promise<string | null> {
+): Promise<SubscriberConfirmationReplacementResult | null> {
   const canonicalEmail = email.trim().toLowerCase();
   const [subscriber] = await db
     .select()
@@ -385,7 +653,11 @@ async function requestSubscriberConfirmationReplacementWithCohort(
         canonicalEmail,
       )
     : null;
-  if (!subscriber || !claim) return null;
+  if (!subscriber) return null;
+  if (!claim) {
+    const cohort = subscriber.replacementVerificationAttemptId?.split("~", 1)[0];
+    return cohort ? { cohort, sent: false } : null;
+  }
 
   const baseUrl = getPublicBaseUrl(host);
   await sendConfirmation(
@@ -397,6 +669,7 @@ async function requestSubscriberConfirmationReplacementWithCohort(
     .update(subscribersTable)
     .set({
       replacementVerificationAttemptId: null,
+      replacementVerificationRetryAt: null,
       updatedAt: claim.claimedAt,
     })
     .where(
@@ -409,7 +682,10 @@ async function requestSubscriberConfirmationReplacementWithCohort(
         ),
       ),
     );
-  return readConfirmationTokenMetadata(claim.token).cohort;
+  return {
+    cohort: readConfirmationTokenMetadata(claim.token).cohort,
+    sent: true,
+  };
 }
 
 export async function requestSubscriberConfirmationReplacement(
@@ -417,13 +693,12 @@ export async function requestSubscriberConfirmationReplacement(
   host: string | undefined,
   sendConfirmation = sendSubscriptionConfirmation,
 ): Promise<boolean> {
-  return Boolean(
-    await requestSubscriberConfirmationReplacementWithCohort(
-      email,
-      host,
-      sendConfirmation,
-    ),
+  const result = await requestSubscriberConfirmationReplacementWithCohort(
+    email,
+    host,
+    sendConfirmation,
   );
+  return result?.sent ?? false;
 }
 
 function resultPage(title: string, copy: string): string {
@@ -434,6 +709,7 @@ export function createVerifySubscriberHandler(
   sendWelcome: SendSubscriptionWelcome = sendSubscriptionWelcome,
 ): RequestHandler {
   return async (req, res): Promise<void> => {
+    res.set("Cache-Control", "no-store");
     const query = VerifySubscriberQueryParams.safeParse(req.query);
     if (!query.success) {
       res.status(400).type("html").send(resultPage("That link isn’t valid.", "Please request a fresh subscription link from the homepage."));
@@ -446,6 +722,7 @@ export function createVerifySubscriberHandler(
         verifiedAt: new Date(),
         verificationTokenHash: null,
         replacementVerificationAttemptId: null,
+        replacementVerificationRetryAt: null,
         unsubscribedAt: null,
         updatedAt: new Date(),
       })
@@ -550,10 +827,8 @@ router.post("/subscribers", async (req, res): Promise<void> => {
     return;
   }
 
+  const confirmationCohort = getConfirmationCohort();
   const verificationToken = await claimSubscriberVerification(existing.id, email);
-  const confirmationCohort = verificationToken
-    ? readConfirmationTokenMetadata(verificationToken).cohort ?? getConfirmationCohort()
-    : getConfirmationCohort();
 
   if (verificationToken) {
     const baseUrl = getPublicBaseUrl(req.get("host"));
@@ -569,7 +844,15 @@ router.post("/subscribers", async (req, res): Promise<void> => {
             eq(subscribersTable.verificationTokenHash, hash(verificationToken)),
           ),
         );
-      throw error;
+      req.log?.error(
+        {
+          event: "subscriber_confirmation_delivery_failed",
+          classification: classifyEmailDeliveryFailure(error),
+        },
+        "Subscriber confirmation email delivery failed",
+      );
+      res.status(500).json({ error: "Unable to send confirmation email" });
+      return;
     }
   }
   res.status(202).json(
@@ -587,11 +870,24 @@ router.post("/subscribers/resend", async (req, res): Promise<void> => {
     return;
   }
 
-  const confirmationCohort =
-    await requestSubscriberConfirmationReplacementWithCohort(
+  let confirmationCohort: string | null;
+  try {
+    const result = await requestSubscriberConfirmationReplacementWithCohort(
       body.data.email,
       req.get("host"),
     );
+    confirmationCohort = result?.cohort ?? null;
+  } catch (error) {
+    req.log?.error(
+      {
+        event: "subscriber_confirmation_delivery_failed",
+        classification: classifyEmailDeliveryFailure(error),
+      },
+      "Subscriber confirmation email delivery failed",
+    );
+    res.status(500).json({ error: "Unable to send confirmation email" });
+    return;
+  }
 
   res.status(202).json(
     ResendSubscriberConfirmationResponse.parse({
@@ -604,6 +900,7 @@ router.post("/subscribers/resend", async (req, res): Promise<void> => {
 router.get("/subscribers/verify", createVerifySubscriberHandler());
 
 router.get("/subscribers/unsubscribe", async (req, res): Promise<void> => {
+  res.set("Cache-Control", "private, no-store");
   const query = UnsubscribeSubscriberQueryParams.safeParse(req.query);
   if (!query.success) {
     res.status(400).type("html").send(resultPage("That link isn’t valid.", "No subscription was changed."));

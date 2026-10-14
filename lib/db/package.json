@@ -8,8 +8,10 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
-    "push": "node ./scripts/normalize-subscriber-emails.mjs && drizzle-kit push --config ./drizzle.config.ts",
-    "push-force": "node ./scripts/normalize-subscriber-emails.mjs && drizzle-kit push --force --config ./drizzle.config.ts"
+    "push": "node ./scripts/normalize-subscriber-emails.mjs && node ./scripts/prepare-review-search.mjs && node ./scripts/push-schema.mjs && node ./scripts/migrate-submission-publication.mjs && node ./scripts/install-upload-cleanup.mjs",
+    "push-force": "node ./scripts/normalize-subscriber-emails.mjs && node ./scripts/prepare-review-search.mjs && drizzle-kit push --force --config ./drizzle.config.ts && node ./scripts/migrate-submission-publication.mjs && node ./scripts/install-upload-cleanup.mjs",
+    "test:review-search-plans": "node ./scripts/benchmark-review-queue.mjs",
+    "migrate:upload-cleanup": "node ./scripts/install-upload-cleanup.mjs"
   },
   "dependencies": {
     "drizzle-orm": "catalog:",

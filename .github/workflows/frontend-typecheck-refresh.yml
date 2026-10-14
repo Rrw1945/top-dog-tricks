@@ -1,46 +1,19 @@
 name: Frontend API type refresh
-
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/frontend-typecheck-refresh.yml"
-      - ".github/workflows/native-process-identity.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "scripts/check-node-support-matrix.mjs"
-      - "scripts/check-node-support-matrix.test.mjs"
-      - "scripts/check-frontend-typecheck-refreshes-api-client.mjs"
-      - "artifacts/top-dog-tricks/**"
-      - "lib/api-client-react/**"
-      - "lib/api-spec/**"
-      - "tsconfig*.json"
   push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/frontend-typecheck-refresh.yml"
-      - ".github/workflows/native-process-identity.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "scripts/check-node-support-matrix.mjs"
-      - "scripts/check-node-support-matrix.test.mjs"
-      - "scripts/check-frontend-typecheck-refreshes-api-client.mjs"
-      - "artifacts/top-dog-tricks/**"
-      - "lib/api-client-react/**"
-      - "lib/api-spec/**"
-      - "tsconfig*.json"
+    branches: [verification/standard-recovery-cold-2026-10-14]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  frontend-typecheck-refresh:
-    name: Refresh API client declarations during frontend typecheck
+  standard-recovery:
+    name: Standard recovery on Node.js ${{ matrix.node }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -49,11 +22,31 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-          cache: pnpm
-      - name: Verify Node support matches all CI workflows
-        run: pnpm run check:node-support-matrix
+          node-version: ${{ matrix.node }}
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
-      - name: Verify frontend typecheck refreshes API client declarations
-        run: pnpm run check:frontend-typecheck-refreshes-api-client
+      # Run every fixture after failures, but honor workflow cancellation.
+      # Do not use continue-on-error: any fixture failure must fail this job.
+      # Allow more time for interruption's repeated builds. The 13-minute
+      # fixture budget leaves setup headroom within the 15-minute job limit.
+      - name: Verify interrupted recovery on Node.js ${{ matrix.node }}
+        timeout-minutes: 5
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:interruption
+      - name: Verify recovery lock handoff on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-handoff
+      - name: Verify recovery lock cleanup on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-cleanup
+      - name: Verify recovery lock rescan failure on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-rescan-failure
+      - name: Verify recovery multi-lock rescan failure on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-multi-rescan-failure
+

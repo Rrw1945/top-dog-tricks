@@ -18,17 +18,18 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * Creates a single-use resumable storage session. PUT exactly the declared bytes to uploadURL. MP4/MOV videos are limited to 524288000 bytes (500 MiB); PNG signatures to 2097152 bytes (2 MiB). Stored media is independently checked before entry acceptance.
  * @summary Request a direct upload URL
  */
 
-
+export const requestUploadUrlBodySizeMax = 524288000;
 
 
 
 export const RequestUploadUrlBody = zod.object({
   "name": zod.string().min(1),
-  "size": zod.int().min(1),
-  "contentType": zod.string().min(1)
+  "size": zod.int().min(1).max(requestUploadUrlBodySizeMax),
+  "contentType": zod.enum(['video/mp4', 'video/quicktime', 'image/png'])
 })
 
 export const RequestUploadUrlResponse = zod.object({
@@ -38,6 +39,7 @@ export const RequestUploadUrlResponse = zod.object({
 
 
 /**
+ * The optional preview=1 query returns a generated JPEG video thumbnail under the same authorization checks as the source object.
  * @summary Serve a stored media object
  */
 export const GetStoredObjectParams = zod.object({
@@ -50,51 +52,32 @@ export const GetStoredObjectResponse = zod.unknown()
 /**
  * @summary List contest submissions for the admin
  */
+export const listSubmissionsQuerySearchMax = 200;
+
+export const listSubmissionsQueryLimitDefault = 50;
+export const listSubmissionsQueryLimitMax = 100;
+
+export const listSubmissionsQueryCursorMax = 2147483647;
+
+
+
 export const ListSubmissionsQueryParams = zod.object({
+  "search": zod.coerce.string().max(listSubmissionsQuerySearchMax).optional(),
+  "limit": zod.coerce.number().int().min(1).max(listSubmissionsQueryLimitMax).default(listSubmissionsQueryLimitDefault),
+  "cursor": zod.coerce.number().int().min(1).max(listSubmissionsQueryCursorMax).optional().describe('Exclusive entry ID boundary, newest IDs first.'),
   "status": zod.enum(['pending', 'approved', 'needs_edit', 'rejected']).optional()
 })
 
-export const ListSubmissionsResponseItem = zod.object({
+export const ListSubmissionsResponse = zod.object({
+  "records": zod.array(zod.object({
   "id": zod.int(),
-  "ownerName": zod.string(),
-  "email": zod.string(),
-  "phone": zod.string(),
   "dogName": zod.string(),
-  "breedBio": zod.string().nullish(),
+  "ownerName": zod.string(),
   "trickName": zod.string(),
-  "trickDescription": zod.string(),
-  "videoObjectPath": zod.string(),
-  "videoFileName": zod.string(),
-  "videoContentType": zod.string(),
-  "signatureObjectPath": zod.string(),
-  "driveReleaseFileId": zod.string().nullish(),
-  "driveReleaseUrl": zod.url().nullish(),
-  "airtableContestantId": zod.string().nullish(),
-  "airtableSubmissionId": zod.string().nullish(),
-  "processingStatus": zod.string(),
-  "trimStartSeconds": zod.number().nullish(),
-  "trimEndSeconds": zod.number().nullish(),
-  "aiAnalysisStatus": zod.string(),
-  "aiAnalysisRunId": zod.string().nullish(),
-  "aiAnalysisStartedAt": zod.coerce.date().nullish(),
-  "aiAnalysisHeartbeatAt": zod.coerce.date().nullish(),
-  "aiAnalysisChunksCompleted": zod.int().nullish(),
-  "aiAnalysisChunksTotal": zod.int().nullish(),
-  "aiTrimStartSeconds": zod.number().nullish(),
-  "aiTrimEndSeconds": zod.number().nullish(),
-  "aiDetectedAction": zod.string().nullish(),
-  "aiPunchlines": zod.string().nullish(),
-  "aiConfidence": zod.number().nullish(),
-  "aiAnalysisError": zod.string().nullish(),
-  "processedVideoObjectPath": zod.string().nullish(),
-  "voiceoverObjectPath": zod.string().nullish(),
-  "processingError": zod.string().nullish(),
-  "status": zod.enum(['pending', 'approved', 'needs_edit', 'rejected']),
-  "punchline": zod.string().nullish(),
-  "submittedAt": zod.coerce.date(),
-  "updatedAt": zod.coerce.date()
+  "status": zod.enum(['pending', 'approved', 'needs_edit', 'rejected'])
+})),
+  "nextCursor": zod.int().nullable()
 })
-export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem)
 
 
 /**
@@ -346,7 +329,7 @@ export const ListShowcaseEntriesResponseItem = zod.object({
   "processedVideoObjectPath": zod.string().nullish(),
   "voiceoverObjectPath": zod.string().nullish(),
   "punchline": zod.string().nullish(),
-  "publishedAt": zod.coerce.date(),
+  "publishedAt": zod.coerce.date().describe('First showcase publication time, preserved through edits and reprocessing. The epoch (1970-01-01T00:00:00Z) denotes an unknown historical publication date; ties sort by descending submission ID.'),
   "likeCount": zod.int()
 })
 export const ListShowcaseEntriesResponse = zod.array(ListShowcaseEntriesResponseItem)
@@ -437,6 +420,138 @@ export const GetDashboardSummaryResponse = zod.object({
   "approved": zod.int(),
   "needsEdit": zod.int(),
   "rejected": zod.int()
+})
+
+
+/**
+ * @summary Search submission contacts for administrators
+ */
+export const getAdminContestantsQuerySearchMax = 100;
+
+export const getAdminContestantsQueryLimitDefault = 50;
+export const getAdminContestantsQueryLimitMax = 100;
+
+export const getAdminContestantsQueryCursorRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetAdminContestantsQueryParams = zod.object({
+  "search": zod.coerce.string().max(getAdminContestantsQuerySearchMax).optional().describe('Case-insensitive substring of owner name, dog name or email'),
+  "limit": zod.coerce.number().int().min(1).max(getAdminContestantsQueryLimitMax).default(getAdminContestantsQueryLimitDefault),
+  "cursor": zod.coerce.string().regex(getAdminContestantsQueryCursorRegExp).optional().describe('Return submissions with IDs less than this ID')
+})
+
+export const GetAdminContestantsResponse = zod.object({
+  "records": zod.array(zod.object({
+  "id": zod.int(),
+  "ownerName": zod.string(),
+  "dogName": zod.string(),
+  "email": zod.string(),
+  "phone": zod.string(),
+  "submittedAt": zod.coerce.date(),
+  "status": zod.enum(['pending', 'approved', 'needs_edit', 'rejected'])
+})),
+  "nextCursor": zod.string().nullable()
+})
+
+
+/**
+ * @summary Show welcome email delivery states for administrators
+ */
+export const getWelcomeEmailAdminRecordsQueryLimitDefault = 50;
+export const getWelcomeEmailAdminRecordsQueryLimitMax = 100;
+
+
+
+export const GetWelcomeEmailAdminRecordsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getWelcomeEmailAdminRecordsQueryLimitMax).default(getWelcomeEmailAdminRecordsQueryLimitDefault).describe('Maximum number of operational welcome email records to return'),
+  "cursor": zod.coerce.string().optional().describe('Return records after this page cursor')
+})
+
+export const GetWelcomeEmailAdminRecordsResponse = zod.object({
+  "records": zod.array(zod.object({
+  "id": zod.int(),
+  "email": zod.string(),
+  "status": zod.enum(['active_claim', 'expired_claim', 'failed', 'permanently_failed']),
+  "claimedAt": zod.coerce.date().nullable(),
+  "failedAt": zod.coerce.date().nullable(),
+  "lastError": zod.string().nullable(),
+  "attemptCount": zod.int()
+})),
+  "nextCursor": zod.string().nullable(),
+  "backlog": zod.object({
+  "retryableCount": zod.int(),
+  "oldestRetryAt": zod.coerce.date().nullable(),
+  "oldestRetryAgeMinutes": zod.int().nullable(),
+  "repeatedFailureCount": zod.int(),
+  "state": zod.enum(['clear', 'healthy', 'attention'])
+})
+})
+
+
+/**
+ * @summary Show aggregate deferred confirmation retry status for administrators
+ */
+export const GetDeferredConfirmationAdminStatusResponse = zod.object({
+  "deferredCount": zod.int().describe('Number of pending confirmation attempts currently inside their persisted retry window'),
+  "nextRetryAt": zod.coerce.date().nullable().describe('Earliest persisted retry time among currently deferred confirmation attempts')
+})
+
+
+/**
+ * @summary Read the aggregate newsletter confirmation funnel for administrators
+ */
+export const getNewsletterFunnelReportResponseCoverageStartDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getNewsletterFunnelReportResponseCoverageAuditTrailItemCoverageStartDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+export const getNewsletterFunnelReportResponseCoverageCohortsItemCohortRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getNewsletterFunnelReportResponseCoverageAlertsItemCohortsItemRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetNewsletterFunnelReportResponse = zod.object({
+  "reportAsOf": zod.string(),
+  "coverage": zod.object({
+  "startDate": zod.string().regex(getNewsletterFunnelReportResponseCoverageStartDateRegExp).nullable(),
+  "status": zod.enum(['recorded', 'unavailable']),
+  "auditTrail": zod.array(zod.object({
+  "coverageStartDate": zod.string().regex(getNewsletterFunnelReportResponseCoverageAuditTrailItemCoverageStartDateRegExp).nullable(),
+  "reason": zod.string().min(1)
+})),
+  "cohorts": zod.array(zod.object({
+  "cohort": zod.string().regex(getNewsletterFunnelReportResponseCoverageCohortsItemCohortRegExp),
+  "coverageStatus": zod.enum(['coverage_unavailable', 'missing_coverage', 'zero_requests', 'covered']),
+  "requests": zod.int()
+})),
+  "alerts": zod.array(zod.object({
+  "kind": zod.enum(['missing_events', 'coverage_regression']),
+  "cohorts": zod.array(zod.string().regex(getNewsletterFunnelReportResponseCoverageAlertsItemCohortsItemRegExp))
+}))
+}),
+  "native": zod.object({
+  "rows": zod.array(zod.object({
+  "source": zod.enum(['initial', 'replacement']),
+  "requests": zod.int(),
+  "confirmations": zod.int(),
+  "conversionRatePercent": zod.number().nullable(),
+  "ci95LowerPercent": zod.number().nullable(),
+  "ci95UpperPercent": zod.number().nullable()
+})),
+  "comparison": zod.object({
+  "result": zod.string(),
+  "liftPoints": zod.number().nullable(),
+  "liftCi95LowerPoints": zod.number().nullable(),
+  "liftCi95UpperPoints": zod.number().nullable()
+})
+}),
+  "historical": zod.object({
+  "rows": zod.array(zod.object({
+  "source": zod.enum(['initial', 'replacement']),
+  "requests": zod.int(),
+  "confirmations": zod.int(),
+  "conversionRatePercent": zod.number().nullable(),
+  "ci95LowerPercent": zod.number().nullable(),
+  "ci95UpperPercent": zod.number().nullable()
+}))
+})
 })
 
 

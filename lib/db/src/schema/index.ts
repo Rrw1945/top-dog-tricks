@@ -19,3 +19,4 @@
 
 export * from "./submissions";
 export * from "./engagement";
+export * from "./entry-uploads";

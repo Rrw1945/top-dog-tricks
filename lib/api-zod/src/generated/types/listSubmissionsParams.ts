@@ -8,5 +8,20 @@
 import type { SubmissionStatus } from './submissionStatus';
 
 export type ListSubmissionsParams = {
+/**
+ * @maxLength 200
+ */
+search?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Exclusive entry ID boundary, newest IDs first.
+ * @minimum 1
+ * @maximum 2147483647
+ */
+cursor?: number;
 status?: SubmissionStatus;
 };

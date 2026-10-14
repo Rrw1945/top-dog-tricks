@@ -6,11 +6,32 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './adminContestant';
+export * from './adminContestantsPage';
+export * from './adminContestantStatus';
 export * from './adminLoginInput';
 export * from './adminSession';
 export * from './dashboardSummary';
+export * from './deferredConfirmationAdminStatus';
+export * from './getAdminContestantsParams';
+export * from './getWelcomeEmailAdminRecordsParams';
 export * from './healthStatus';
 export * from './listSubmissionsParams';
+export * from './newsletterFunnelComparison';
+export * from './newsletterFunnelCoverage';
+export * from './newsletterFunnelCoverageAlertsItem';
+export * from './newsletterFunnelCoverageAlertsItemKind';
+export * from './newsletterFunnelCoverageAuditTrailItem';
+export * from './newsletterFunnelCoverageCohort';
+export * from './newsletterFunnelCoverageCohortCoverageStatus';
+export * from './newsletterFunnelCoverageStatus';
+export * from './newsletterFunnelReport';
+export * from './newsletterFunnelReportHistorical';
+export * from './newsletterFunnelReportNative';
+export * from './newsletterFunnelRow';
+export * from './newsletterFunnelSource';
+export * from './reviewQueueEntry';
+export * from './reviewQueuePage';
 export * from './showcaseEntry';
 export * from './showcaseLike';
 export * from './showcaseLikeInput';
@@ -23,5 +44,11 @@ export * from './subscriberInput';
 export * from './subscriberStatus';
 export * from './unsubscribeSubscriberParams';
 export * from './uploadRequest';
+export * from './uploadRequestContentType';
 export * from './uploadResponse';
 export * from './verifySubscriberParams';
+export * from './welcomeEmailAdminBacklog';
+export * from './welcomeEmailAdminRecord';
+export * from './welcomeEmailAdminRecordsPage';
+export * from './welcomeEmailAdminStatus';
+export * from './welcomeEmailRecoveryState';

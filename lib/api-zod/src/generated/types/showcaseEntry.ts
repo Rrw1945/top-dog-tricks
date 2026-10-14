@@ -20,6 +20,7 @@ export interface ShowcaseEntry {
   voiceoverObjectPath?: string | null;
   /** @nullable */
   punchline?: string | null;
+  /** First showcase publication time, preserved through edits and reprocessing. The epoch (1970-01-01T00:00:00Z) denotes an unknown historical publication date; ties sort by descending submission ID. */
   publishedAt: Date;
   likeCount: number;
 }

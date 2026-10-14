@@ -15,6 +15,8 @@ const LEGAL_RELEASES_FOLDER_ID =
   '1voHisfdIoFYC8s-ouRpCd3UxRqc8K6Bw';
 const SLACK_REVIEW_CHANNEL_ID =
   process.env.SLACK_REVIEW_CHANNEL_ID ?? 'C0BUBL0EEE9';
+const SLACK_ANALYTICS_CHANNEL_ID =
+  process.env.SLACK_ANALYTICS_CHANNEL_ID ?? SLACK_REVIEW_CHANNEL_ID;
 
 const objectStorage = new ObjectStorageService();
 
@@ -157,7 +159,9 @@ async function createAirtableRecords(
   release: DriveFile | null,
   publicBaseUrl: string,
 ): Promise<{ contestantId: string; submissionId: string }> {
-  const mediaUrl = `${publicBaseUrl}/api/storage/objects/${submission.videoObjectPath.replace('/objects/', '')}`;
+  // Airtable fetches attachments server-side without an admin session.
+  // Grant this one transfer a short-lived storage URL, never a public raw route.
+  const mediaUrl = await objectStorage.getObjectEntityReadURL(submission.videoObjectPath);
   const releaseUrl = release?.webViewLink ?? (release ? driveDownloadUrl(release.id) : undefined);
   const releaseAttachment = releaseUrl
     ? [{ url: releaseUrl, filename: `${submission.dogName}-${submission.id}-legal-release.pdf` }]
@@ -205,7 +209,9 @@ async function createAirtableRecords(
               'Raw Video File': [
                 { url: mediaUrl, filename: submission.videoFileName },
               ],
-              'Raw Video Drive': mediaUrl,
+              // Keep a stable, authenticated reviewer link instead of persisting
+              // the short-lived storage grant in a long-lived Airtable field.
+              'Raw Video Drive': `${publicBaseUrl}/admin?submission=${submission.id}`,
               'Action start Timestamp': '0',
               'Action End Timestamp': '',
             },
@@ -314,7 +320,7 @@ export async function updateAirtableProcessedMedia(
   if (!submission.airtableSubmissionId || !submission.processedVideoObjectPath) {
     return;
   }
-  const mediaUrl = `${publicBaseUrl}/api/storage/objects/${submission.processedVideoObjectPath.replace('/objects/', '')}`;
+  const mediaUrl = await objectStorage.getObjectEntityReadURL(submission.processedVideoObjectPath);
   await connectorJson(
     'airtable',
     `/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_SUBMISSIONS_TABLE}`,
@@ -360,8 +366,11 @@ export async function sendSlackPreview(
     error?: string;
   }>('slack', '/files.getUploadURLExternal', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename, length: videoBytes.length }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      filename,
+      length: String(videoBytes.length),
+    }).toString(),
   });
   if (!upload.ok || !upload.upload_url || !upload.file_id) {
     throw new Error(
@@ -443,6 +452,64 @@ export async function sendSlackPreview(
   if (!posted.ok) {
     throw new Error(
       `Slack preview post failed: ${posted.error ?? 'unknown error'}`,
+    );
+  }
+}
+
+export type AnalyticsCoverageRegressionNotification = {
+  cohorts: Array<{
+    cohort: string;
+    requests: number;
+  }>;
+};
+
+export async function sendSlackAnalyticsCoverageRegression(
+  notification: AnalyticsCoverageRegressionNotification,
+  idempotencyKey?: string,
+): Promise<void> {
+  const cohortLines = notification.cohorts.map(
+    ({ cohort, requests }) => `• ${cohort}: ${requests} native requests`,
+  );
+  const text = [
+    'Analytics coverage regression detected',
+    ...cohortLines,
+  ].join('\n');
+  const posted = await connectorJson<{ ok: boolean; error?: string }>(
+    'slack',
+    '/chat.postMessage',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel: SLACK_ANALYTICS_CHANNEL_ID,
+        ...(idempotencyKey ? { client_msg_id: idempotencyKey } : {}),
+        text,
+        unfurl_links: false,
+        blocks: [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: 'Analytics coverage regression',
+            },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: [
+                '*Covered cohorts stopped producing native events.*',
+                ...cohortLines,
+              ].join('\n'),
+            },
+          },
+        ],
+      }),
+    },
+  );
+  if (!posted.ok) {
+    throw new Error(
+      `Slack analytics coverage alert failed: ${posted.error ?? 'unknown error'}`,
     );
   }
 }

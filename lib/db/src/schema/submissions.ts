@@ -1,6 +1,7 @@
 import { createInsertSchema } from "drizzle-zod";
 import {
   doublePrecision,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -58,18 +59,28 @@ export const submissionsTable = pgTable("submissions", {
   processingError: text("processing_error"),
   status: submissionStatusEnum("status").notNull().default("pending"),
   punchline: text("punchline"),
+  // First showcase eligibility; epoch marks pre-tracking publications with unknown dates.
+  publishedAt: timestamp("published_at", { withTimezone: true }),
   submittedAt: timestamp("submitted_at", {
     withTimezone: true,
   }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", {
     withTimezone: true,
   }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  index("submissions_review_status_id_idx").on(table.status, table.id.desc().nullsFirst()),
+  // Keep separate trigram indexes: the review predicate is an OR across fields,
+  // not a concatenation (which would change matching at field boundaries).
+  index("submissions_review_dog_search_idx").using("gin", table.dogName.op("public.gin_trgm_ops")),
+  index("submissions_review_owner_search_idx").using("gin", table.ownerName.op("public.gin_trgm_ops")),
+  index("submissions_review_trick_search_idx").using("gin", table.trickName.op("public.gin_trgm_ops")),
+]);
 
 export const insertSubmissionSchema = createInsertSchema(submissionsTable).omit({
   id: true,
   status: true,
   punchline: true,
+  publishedAt: true,
   submittedAt: true,
   updatedAt: true,
 } as const);
