@@ -86,6 +86,19 @@ ${body}
   const expected = { schemaVersion: 1, status: "failed", lockDiagnostics: [] };
   if (mode === "prepare") {
     await mkdir(path.join(root, "isolated harness/scripts"), { recursive: true });
+    const fixtureConfigs = {
+      "tsconfig.json": { references: [] },
+      "artifacts/api-server/tsconfig.json": { references: [{ path: "../../lib/fixture" }] },
+      "lib/fixture/tsconfig.json": {
+        compilerOptions: { composite: true, emitDeclarationOnly: true },
+      },
+      "lib/fixture/package.json": { name: "@fixture/declarations", private: true },
+    };
+    for (const [name, value] of Object.entries(fixtureConfigs)) {
+      const destination = path.join(root, "isolated harness", name);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, JSON.stringify(value));
+    }
     for (const name of ["check-api-typecheck-rebuilds-db.mjs", "api-typecheck-failure-report.mjs"]) {
       await writeFile(path.join(root, "isolated harness/scripts", name),
         await readFile(path.join(root, "scripts", name)));
