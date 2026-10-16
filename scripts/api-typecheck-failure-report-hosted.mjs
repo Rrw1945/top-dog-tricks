@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const native = await readFile(path.join(root, ".github/workflows/native-process-identity.yml"), "utf8");
+const native = (await readFile(path.join(root, ".github/workflows/native-process-identity.yml"), "utf8"))
+  .replace(/\r\n/g, "\n");
 const command = native.match(/run: (pnpm run check:api-typecheck-rebuilds-libs:process-identity:native --failure-report .+)/)?.[1];
 const upload = native.split("      - name: Upload API typecheck failure reports\n")[1]?.trimEnd();
 assert.ok(command && upload, "native report wiring must be available");
