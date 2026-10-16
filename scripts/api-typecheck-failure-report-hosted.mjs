@@ -53,10 +53,11 @@ jobs:
           node-version: \${{ matrix.node }}
       - name: Restore earlier report on successful rerun
         if: \${{ github.run_attempt != '1' }}
-        uses: actions/download-artifact@v4
+        uses: actions/cache/restore@v4
         with:
-          name: api-typecheck-failures-native-\${{ github.run_id }}-1-process-identity-\${{ matrix.os }}-node-\${{ matrix.node }}
+          key: isolated-report-\${{ github.run_id }}-\${{ matrix.os }}-\${{ matrix.node }}
           path: earlier report
+          fail-on-cache-miss: true
       - name: Prepare isolated harness package
         run: node scripts/api-typecheck-failure-report-hosted.mjs prepare
       - name: Run isolated harness with native command
@@ -69,6 +70,12 @@ jobs:
           HARNESS_OUTCOME: \${{ steps.harness.outcome }}
           HARNESS_CONCLUSION: \${{ steps.harness.conclusion }}
         run: node scripts/api-typecheck-failure-report-hosted.mjs verify
+      - name: Preserve first report for the rerun fixture
+        if: \${{ always() && github.run_attempt == '1' }}
+        uses: actions/cache/save@v4
+        with:
+          key: isolated-report-\${{ github.run_id }}-\${{ matrix.os }}-\${{ matrix.node }}
+          path: earlier report
       - name: Upload API typecheck failure reports
 ${body}
       - name: Verify upload result
@@ -121,7 +128,10 @@ ${body}
     const files = (await readdir(reportDir)).filter((name) => name.endsWith(".json"));
     assert.deepEqual(files, attempt === 1 ? ["native.json"] : []);
     if (attempt === 1) {
-      assert.deepEqual(JSON.parse(await readFile(path.join(reportDir, "native.json"), "utf8")), expected);
+      const report = await readFile(path.join(reportDir, "native.json"), "utf8");
+      assert.deepEqual(JSON.parse(report), expected);
+      await mkdir(path.join(root, "earlier report"), { recursive: true });
+      await writeFile(path.join(root, "earlier report/native.json"), report);
     } else {
       // Do not remove the stale report: absence from upload must come from scope.
       assert.deepEqual(await readdir(path.join(root, "earlier report")), ["native.json"]);

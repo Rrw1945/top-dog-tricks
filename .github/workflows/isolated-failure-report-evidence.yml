@@ -35,10 +35,11 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Restore earlier report on successful rerun
         if: ${{ github.run_attempt != '1' }}
-        uses: actions/download-artifact@v4
+        uses: actions/cache/restore@v4
         with:
-          name: api-typecheck-failures-native-${{ github.run_id }}-1-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
+          key: isolated-report-${{ github.run_id }}-${{ matrix.os }}-${{ matrix.node }}
           path: earlier report
+          fail-on-cache-miss: true
       - name: Prepare isolated harness package
         run: node scripts/api-typecheck-failure-report-hosted.mjs prepare
       - name: Run isolated harness with native command
@@ -51,6 +52,12 @@ jobs:
           HARNESS_OUTCOME: ${{ steps.harness.outcome }}
           HARNESS_CONCLUSION: ${{ steps.harness.conclusion }}
         run: node scripts/api-typecheck-failure-report-hosted.mjs verify
+      - name: Preserve first report for the rerun fixture
+        if: ${{ always() && github.run_attempt == '1' }}
+        uses: actions/cache/save@v4
+        with:
+          key: isolated-report-${{ github.run_id }}-${{ matrix.os }}-${{ matrix.node }}
+          path: earlier report
       - name: Upload API typecheck failure reports
         id: report-upload
         if: ${{ always() }}
