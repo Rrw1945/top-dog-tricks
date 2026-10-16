@@ -5,9 +5,18 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { SubmissionCategory } from './submissionCategory';
+import type { SubmissionSoundtrack } from './submissionSoundtrack';
 import type { SubmissionStatus } from './submissionStatus';
 
 export interface Submission {
+  soundtrack?: SubmissionSoundtrack;
+  category?: SubmissionCategory;
+  /** @nullable */
+  sourceCredit?: string | null;
+  /** @nullable */
+  sourceUrl?: string | null;
+  prizeEligible?: boolean;
   id: number;
   ownerName: string;
   email: string;

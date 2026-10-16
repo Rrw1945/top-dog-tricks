@@ -5,13 +5,25 @@ on:
     paths:
       - ".github/workflows/frontend-typecheck-refresh.yml"
       - ".github/workflows/native-process-identity.yml"
+      - ".github/workflows/required-merge-checks.yml"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "scripts/check-api-typecheck-rebuilds-db.mjs"
+      - "scripts/api-typecheck-failure-report*.mjs"
       - "scripts/check-node-support-matrix.mjs"
       - "scripts/check-node-support-matrix.test.mjs"
       - "scripts/check-frontend-typecheck-refreshes-api-client.mjs"
-      - "artifacts/top-dog-tricks/**"
+      - "scripts/check-frontend-typecheck-refreshes-api-client.test.mjs"
+      - "scripts/check-required-merge-checks.mjs"
+      - "scripts/check-required-merge-checks.test.mjs"
+      - "artifacts/api-server/test.mjs"
+      - "artifacts/api-server/test-discovery.mjs"
+      - "artifacts/api-server/src/routes/subscriberNotifications.integration.test.ts"
+      - "lib/db/drizzle.config.ts"
+      - "lib/db/scripts/**"
+      - "**/package.json"
+      - "**/src/**"
       - "lib/api-client-react/**"
       - "lib/api-spec/**"
       - "tsconfig*.json"
@@ -21,13 +33,25 @@ on:
     paths:
       - ".github/workflows/frontend-typecheck-refresh.yml"
       - ".github/workflows/native-process-identity.yml"
+      - ".github/workflows/required-merge-checks.yml"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "scripts/check-api-typecheck-rebuilds-db.mjs"
+      - "scripts/api-typecheck-failure-report*.mjs"
       - "scripts/check-node-support-matrix.mjs"
       - "scripts/check-node-support-matrix.test.mjs"
       - "scripts/check-frontend-typecheck-refreshes-api-client.mjs"
-      - "artifacts/top-dog-tricks/**"
+      - "scripts/check-frontend-typecheck-refreshes-api-client.test.mjs"
+      - "scripts/check-required-merge-checks.mjs"
+      - "scripts/check-required-merge-checks.test.mjs"
+      - "artifacts/api-server/test.mjs"
+      - "artifacts/api-server/test-discovery.mjs"
+      - "artifacts/api-server/src/routes/subscriberNotifications.integration.test.ts"
+      - "lib/db/drizzle.config.ts"
+      - "lib/db/scripts/**"
+      - "**/package.json"
+      - "**/src/**"
       - "lib/api-client-react/**"
       - "lib/api-spec/**"
       - "tsconfig*.json"
@@ -39,9 +63,24 @@ permissions:
 jobs:
   frontend-typecheck-refresh:
     name: Refresh API client declarations during frontend typecheck
+    needs: [subscriber-notifications, standard-recovery]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
+      - name: Require subscriber notifications and recovery on every supported Node version
+        env:
+          SUBSCRIBER_RESULT: ${{ needs.subscriber-notifications.result }}
+          RECOVERY_RESULT: ${{ needs.standard-recovery.result }}
+        run: |
+          if [ "$SUBSCRIBER_RESULT" != "success" ]; then
+            echo "::error::Subscriber notifications failed, were cancelled, or skipped on Node.js 22 or 24. See the version-labelled subscriber jobs for failing tests."
+            exit 1
+          fi
+          if [ "$RECOVERY_RESULT" != "success" ]; then
+            echo "::error::Standard recovery checks failed, were cancelled, or skipped on Node.js 22 or 24. See the version-labelled recovery jobs."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
@@ -55,5 +94,148 @@ jobs:
         run: pnpm run check:node-support-matrix
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
+      - name: Test required merge-check contract
+        run: pnpm run test:required-merge-checks
+      - name: Verify generated API code is in sync
+        id: api-codegen-drift
+        run: pnpm run check:api-codegen-drift
+      - name: Test frontend refresh diagnostics
+        run: pnpm run test:frontend-typecheck-refreshes-api-client
       - name: Verify frontend typecheck refreshes API client declarations
         run: pnpm run check:frontend-typecheck-refreshes-api-client
+
+  standard-recovery:
+    name: Standard recovery on Node.js ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Run/attempt, job, and matrix scope prevent earlier reports being reused.
+      API_TYPECHECK_FAILURE_REPORT_DIR: ${{ github.workspace }}/generated-artifacts/api-typecheck-failures/frontend-${{ github.run_id }}-${{ github.run_attempt }}-standard-recovery-node-${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify failure report publication on Linux Node.js ${{ matrix.node }}
+        run: node --test scripts/api-typecheck-failure-report.test.mjs scripts/api-typecheck-failure-report-workflows.test.mjs
+      # Run every fixture after failures, but honor workflow cancellation.
+      # Do not use continue-on-error: any fixture failure must fail this job.
+      # Allow more time for interruption's repeated builds. The 13-minute
+      # fixture budget leaves setup headroom within the 15-minute job limit.
+      - name: Verify interrupted recovery on Node.js ${{ matrix.node }}
+        timeout-minutes: 5
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:interruption --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/interruption.json"
+      - name: Verify recovery lock handoff on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-handoff --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/lock-handoff.json"
+      - name: Verify recovery lock cleanup on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-cleanup --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/lock-cleanup.json"
+      - name: Verify recovery lock rescan failure on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-rescan-failure --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/lock-rescan-failure.json"
+      - name: Verify recovery multi-lock rescan failure on Node.js ${{ matrix.node }}
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: pnpm run check:api-typecheck-rebuilds-libs:lock-multi-rescan-failure --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/lock-multi-rescan-failure.json"
+      - name: Upload API typecheck failure reports
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-typecheck-failures-frontend-${{ github.run_id }}-${{ github.run_attempt }}-standard-recovery-node-${{ matrix.node }}
+          path: ${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  subscriber-notifications:
+    name: Subscriber notifications on Node.js ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: subscriber_notifications
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d subscriber_notifications"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Create the subscriber notification test schema
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/subscriber_notifications
+        run: pnpm --filter @workspace/db exec drizzle-kit push --config ./drizzle.config.ts
+      - name: Run subscriber notification regressions on Node.js ${{ matrix.node }}
+        id: subscriber-notifications
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/subscriber_notifications
+        run: |
+          set -o pipefail
+          node --version
+          pnpm --filter @workspace/api-server run test:subscriber-notifications 2>&1 \
+            | tee "$RUNNER_TEMP/subscriber-notifications.tap"
+      - name: Link failed subscriber test names and command
+        if: ${{ failure() && steps.subscriber-notifications.outcome == 'failure' }}
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_OUTPUT: ${{ runner.temp }}/subscriber-notifications.tap
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from "node:fs/promises";
+
+          const command =
+            "pnpm --filter @workspace/api-server run test:subscriber-notifications";
+          const output = await readFile(process.env.TEST_OUTPUT, "utf8").catch(() => "");
+          const failedTests = [
+            ...output.matchAll(/^\s*not ok \d+ - (.+)$/gm),
+          ].map((match) => match[1].trim());
+          const runUrl = process.env.RUN_URL;
+          const lines = [
+            `## Subscriber notification regression failures — Node.js ${process.version}`,
+            "",
+            `Command: [\`${command}\`](${runUrl})`,
+            "",
+            ...(failedTests.length
+              ? failedTests.map((name) => `- [${name}](${runUrl})`)
+              : [`- [The test command failed before a named test was reported.](${runUrl})`]),
+            "",
+          ];
+
+          await appendFile(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+          NODE

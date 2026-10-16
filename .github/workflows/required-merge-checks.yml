@@ -1,0 +1,32 @@
+name: Required merge-check audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 08:23 UTC; deliberately separate from pull-request checks.
+    - cron: "23 8 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit protected main branch merge checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Audit branch protection and rulesets
+        run: pnpm run check:required-merge-checks
+        env:
+          GITHUB_BRANCH: main
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_TOKEN: ${{ secrets.BRANCH_PROTECTION_AUDIT_TOKEN || github.token }}

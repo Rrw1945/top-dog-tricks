@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
-import { Readable } from 'stream';
+import { Readable, addAbortSignal } from 'stream';
 import { File, Storage } from '@google-cloud/storage';
+import { InvalidUploadError, validateMediaContent, validateStoredSize, validateUploadMetadata, type UploadKind } from './uploadValidation';
 
 import {
   canAccessObject,
@@ -41,6 +42,60 @@ export class ObjectNotFoundError extends Error {
 export class ObjectStorageService {
   constructor() {}
 
+  async createEntryUpload(input: { name: string; size: number; contentType: string }, origin?: string): Promise<{ uploadURL: string; objectPath: string }> {
+    validateUploadMetadata(input);
+    const entityId = `uploads/${randomUUID()}`;
+    const { bucketName, objectName } = parseObjectPath(`${this.getPrivateObjectDir()}/${entityId}`);
+    const [uploadURL] = await objectStorageClient.bucket(bucketName).file(objectName).createResumableUpload({
+      // GCS binds browser CORS responses to the origin supplied at session creation.
+      // Preserve the caller's origin instead of the API server's internal hostname.
+      origin,
+      metadata: { contentType: input.contentType, contentLength: input.size,
+        cacheControl: 'private, no-store' },
+      preconditionOpts: { ifGenerationMatch: 0 },
+    });
+    const objectPath = `/objects/${entityId}`;
+    // Persist eligibility before exposing a session. Failure leaves an untracked
+    // session, never a returned upload that cleanup can mistake for abandoned.
+    const { registerEntryUpload } = await import('./entryUploadRegistry');
+    await registerEntryUpload(objectPath);
+    return { uploadURL, objectPath };
+  }
+
+  async validateEntryUpload(objectPath: string, kind: UploadKind, claimedType?: string): Promise<File> {
+    if (!/^\/objects\/uploads\/[a-f0-9-]{36}$/.test(objectPath)) {
+      throw new InvalidUploadError('Upload a new file before submitting your entry.');
+    }
+    const file = await this.getObjectEntityFile(objectPath);
+    const [metadata] = await file.getMetadata();
+    const size = Number(metadata.size);
+    validateStoredSize(size, kind);
+    const contentType = metadata.contentType ?? '';
+    if ((kind === 'signature' && contentType !== 'image/png') ||
+        (kind === 'video' && !['video/mp4', 'video/quicktime'].includes(contentType)) ||
+        (claimedType !== undefined && claimedType !== contentType)) {
+      throw new InvalidUploadError('Stored file type does not match the entry.');
+    }
+    if (!metadata.generation) throw new Error('Storage omitted the object generation');
+    // Pin both inspection and copying to the same bytes, even if an old upload URL overwrites the source.
+    const pinned = file.bucket.file(file.name, { generation: metadata.generation });
+    await validateMediaContent(pinned.createReadStream(), size, kind, contentType);
+    return pinned;
+  }
+
+  // Caller reserves and locks this destination through insertion/commit.
+  async preserveEntryUpload(file: File, destination: string): Promise<string> {
+    if (!/^\/objects\/accepted\/[a-f0-9-]{36}$/.test(destination)) {
+      throw new Error('Invalid preservation destination');
+    }
+    const entityId = destination.slice('/objects/'.length);
+    const { bucketName, objectName } = parseObjectPath(`${this.getPrivateObjectDir()}/${entityId}`);
+    await file.copy(objectStorageClient.bucket(bucketName).file(objectName), {
+      preconditionOpts: { ifGenerationMatch: 0 },
+    });
+    return `/objects/${entityId}`;
+  }
+
   getPublicObjectSearchPaths(): Array<string> {
     const pathsStr = process.env.PUBLIC_OBJECT_SEARCH_PATHS || '';
     const paths = Array.from(
@@ -72,10 +127,17 @@ export class ObjectStorageService {
   }
 
   async searchPublicObject(filePath: string): Promise<File | null> {
+    const privateDir = this.getPrivateObjectDir().replace(/\/+$/, '');
+    if (!isCanonicalObjectName(privateDir)) throw new Error('Invalid PRIVATE_OBJECT_DIR');
+    const privateRoot = parseObjectPath(privateDir);
     for (const searchPath of this.getPublicObjectSearchPaths()) {
+      if (!isCanonicalObjectName(searchPath) || !isCanonicalObjectName(filePath)) continue;
       const fullPath = `${searchPath}/${filePath}`;
 
       const { bucketName, objectName } = parseObjectPath(fullPath);
+      if (bucketName === privateRoot.bucketName &&
+          (!privateRoot.objectName || objectName === privateRoot.objectName ||
+           objectName.startsWith(`${privateRoot.objectName}/`))) continue;
       const bucket = objectStorageClient.bucket(bucketName);
       const file = bucket.file(objectName);
 
@@ -88,15 +150,30 @@ export class ObjectStorageService {
     return null;
   }
 
+  async getObjectEntityReadURL(objectPath: string): Promise<string> {
+    const file = await this.getObjectEntityFile(objectPath);
+    return signObjectURL({
+      bucketName: file.bucket.name,
+      objectName: file.name,
+      method: 'GET',
+      ttlSec: 900,
+    });
+  }
+
   async downloadObject(
     file: File,
     cacheTtlSec: number = 3600,
+    signal?: AbortSignal,
   ): Promise<Response> {
+    signal?.throwIfAborted();
     const [metadata] = await file.getMetadata();
+    signal?.throwIfAborted();
     const aclPolicy = await getObjectAclPolicy(file);
+    signal?.throwIfAborted();
     const isPublic = aclPolicy?.visibility === 'public';
 
     const nodeStream = file.createReadStream();
+    if (signal) addAbortSignal(signal, nodeStream);
     const webStream = Readable.toWeb(nodeStream) as ReadableStream;
 
     const headers: Record<string, string> = {
@@ -138,6 +215,9 @@ export class ObjectStorageService {
       throw new ObjectNotFoundError();
     }
 
+    if (!isCanonicalObjectName(objectPath.slice('/objects/'.length))) {
+      throw new ObjectNotFoundError();
+    }
     const parts = objectPath.slice(1).split('/');
     if (parts.length < 2) {
       throw new ObjectNotFoundError();
@@ -253,6 +333,12 @@ function parseObjectPath(path: string): {
     bucketName,
     objectName,
   };
+}
+
+function isCanonicalObjectName(path: string): boolean {
+  const name = path.replace(/^\//, '');
+  return !!name && !/[%\\\u0000-\u001f]/.test(name) &&
+    name.split('/').every((part) => !!part && part !== '.' && part !== '..');
 }
 
 async function signObjectURL({

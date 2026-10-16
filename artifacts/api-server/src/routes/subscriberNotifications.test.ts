@@ -5,6 +5,7 @@ import {
   deliverSpotlightNotifications,
   isEligibleSpotlightSubscriber,
   SPOTLIGHT_NOTIFICATION_CLAIM_LEASE_MS,
+  startSubmissionSideEffects,
 } from "./submissions";
 import {
   createUnsubscribeToken,
@@ -19,6 +20,37 @@ import {
 } from "../lib/subscriberTokens";
 
 process.env.SESSION_SECRET = "subscriber-notification-test-secret";
+
+test("submission receipt failure is logged without blocking submission automation", async () => {
+  const errors: Array<{ error: unknown; id: number; message: string }> = [];
+  const calls: string[] = [];
+  let automationDone!: () => void;
+  const completed = new Promise<void>((resolve) => {
+    automationDone = resolve;
+  });
+  startSubmissionSideEffects(
+    { id: 42, email: "owner@example.com", ownerName: "Sam", dogName: "Pup" },
+    "https://topdogtricks.com",
+    (error, id, message) => errors.push({ error, id, message }),
+    {
+      sendReceipt: async () => {
+        calls.push("receipt");
+        throw new Error("Resend unavailable");
+      },
+      syncAutomation: async () => {
+        calls.push("automation");
+        automationDone();
+      },
+    },
+  );
+  await completed;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["receipt", "automation"]);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0]?.id, 42);
+  assert.equal(errors[0]?.message, "Submission receipt email delivery failed");
+  assert.match(String(errors[0]?.error), /Resend unavailable/);
+});
 
 test("only verified, non-unsubscribed subscribers are eligible", () => {
   assert.equal(

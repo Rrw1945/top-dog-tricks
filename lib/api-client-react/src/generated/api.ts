@@ -20,11 +20,17 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminContestantsPage,
   AdminLoginInput,
   AdminSession,
   DashboardSummary,
+  DeferredConfirmationAdminStatus,
+  GetAdminContestantsParams,
+  GetWelcomeEmailAdminRecordsParams,
   HealthStatus,
   ListSubmissionsParams,
+  NewsletterFunnelReport,
+  ReviewQueuePage,
   ShowcaseEntry,
   ShowcaseLike,
   ShowcaseLikeInput,
@@ -37,7 +43,8 @@ import type {
   UnsubscribeSubscriberParams,
   UploadRequest,
   UploadResponse,
-  VerifySubscriberParams
+  VerifySubscriberParams,
+  WelcomeEmailAdminRecordsPage
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -154,6 +161,7 @@ export const getRequestUploadUrlUrl = () => {
 }
 
 /**
+ * Creates a single-use resumable storage session. PUT exactly the declared bytes to uploadURL. MP4/MOV videos are limited to 524288000 bytes (500 MiB); PNG signatures to 2097152 bytes (2 MiB). Stored media is independently checked before entry acceptance.
  * @summary Request a direct upload URL
  */
 export const requestUploadUrl = async (uploadRequest: UploadRequest, options?: Parameters<typeof customFetch>[1]): Promise<UploadResponse> => {
@@ -225,6 +233,7 @@ export const getGetStoredObjectUrl = (objectPath: string,) => {
 }
 
 /**
+ * The optional preview=1 query returns a generated JPEG video thumbnail under the same authorization checks as the source object.
  * @summary Serve a stored media object
  */
 export const getStoredObject = async (objectPath: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
@@ -311,9 +320,9 @@ export const getListSubmissionsUrl = (params?: ListSubmissionsParams,) => {
 /**
  * @summary List contest submissions for the admin
  */
-export const listSubmissions = async (params?: ListSubmissionsParams, options?: Parameters<typeof customFetch>[1]): Promise<Submission[]> => {
+export const listSubmissions = async (params?: ListSubmissionsParams, options?: Parameters<typeof customFetch>[1]): Promise<ReviewQueuePage> => {
 
-  return customFetch<Submission[]>(getListSubmissionsUrl(params),
+  return customFetch<ReviewQueuePage>(getListSubmissionsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1192,6 +1201,328 @@ export function useGetDashboardSummary<TData = Awaited<ReturnType<typeof getDash
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDashboardSummaryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminContestantsUrl = (params?: GetAdminContestantsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/contestants?${stringifiedParams}` : `/api/admin/contestants`
+}
+
+/**
+ * @summary Search submission contacts for administrators
+ */
+export const getAdminContestants = async (params?: GetAdminContestantsParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminContestantsPage> => {
+
+  return customFetch<AdminContestantsPage>(getGetAdminContestantsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminContestantsQueryKey = (params?: GetAdminContestantsParams,) => {
+    return [
+    `/api/admin/contestants`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetAdminContestantsQueryOptions = <TData = Awaited<ReturnType<typeof getAdminContestants>>, TError = ErrorType<void>>(params?: GetAdminContestantsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminContestants>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminContestantsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminContestants>>> = ({ signal }) => getAdminContestants(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminContestants>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminContestantsQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminContestants>>>
+export type GetAdminContestantsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Search submission contacts for administrators
+ */
+
+export function useGetAdminContestants<TData = Awaited<ReturnType<typeof getAdminContestants>>, TError = ErrorType<void>>(
+ params?: GetAdminContestantsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminContestants>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminContestantsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetWelcomeEmailAdminRecordsUrl = (params?: GetWelcomeEmailAdminRecordsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/welcome-emails?${stringifiedParams}` : `/api/admin/welcome-emails`
+}
+
+/**
+ * @summary Show welcome email delivery states for administrators
+ */
+export const getWelcomeEmailAdminRecords = async (params?: GetWelcomeEmailAdminRecordsParams, options?: Parameters<typeof customFetch>[1]): Promise<WelcomeEmailAdminRecordsPage> => {
+
+  return customFetch<WelcomeEmailAdminRecordsPage>(getGetWelcomeEmailAdminRecordsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWelcomeEmailAdminRecordsQueryKey = (params?: GetWelcomeEmailAdminRecordsParams,) => {
+    return [
+    `/api/admin/welcome-emails`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetWelcomeEmailAdminRecordsQueryOptions = <TData = Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>, TError = ErrorType<void>>(params?: GetWelcomeEmailAdminRecordsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWelcomeEmailAdminRecordsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>> = ({ signal }) => getWelcomeEmailAdminRecords(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWelcomeEmailAdminRecordsQueryResult = NonNullable<Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>>
+export type GetWelcomeEmailAdminRecordsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Show welcome email delivery states for administrators
+ */
+
+export function useGetWelcomeEmailAdminRecords<TData = Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>, TError = ErrorType<void>>(
+ params?: GetWelcomeEmailAdminRecordsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWelcomeEmailAdminRecords>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWelcomeEmailAdminRecordsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDeferredConfirmationAdminStatusUrl = () => {
+
+
+
+
+  return `/api/admin/deferred-confirmations`
+}
+
+/**
+ * @summary Show aggregate deferred confirmation retry status for administrators
+ */
+export const getDeferredConfirmationAdminStatus = async ( options?: Parameters<typeof customFetch>[1]): Promise<DeferredConfirmationAdminStatus> => {
+
+  return customFetch<DeferredConfirmationAdminStatus>(getGetDeferredConfirmationAdminStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDeferredConfirmationAdminStatusQueryKey = () => {
+    return [
+    `/api/admin/deferred-confirmations`
+    ] as const;
+    }
+
+
+export const getGetDeferredConfirmationAdminStatusQueryOptions = <TData = Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDeferredConfirmationAdminStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>> = ({ signal }) => getDeferredConfirmationAdminStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDeferredConfirmationAdminStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>>
+export type GetDeferredConfirmationAdminStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Show aggregate deferred confirmation retry status for administrators
+ */
+
+export function useGetDeferredConfirmationAdminStatus<TData = Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDeferredConfirmationAdminStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDeferredConfirmationAdminStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetNewsletterFunnelReportUrl = () => {
+
+
+
+
+  return `/api/admin/newsletter-funnel`
+}
+
+/**
+ * @summary Read the aggregate newsletter confirmation funnel for administrators
+ */
+export const getNewsletterFunnelReport = async ( options?: Parameters<typeof customFetch>[1]): Promise<NewsletterFunnelReport> => {
+
+  return customFetch<NewsletterFunnelReport>(getGetNewsletterFunnelReportUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetNewsletterFunnelReportQueryKey = () => {
+    return [
+    `/api/admin/newsletter-funnel`
+    ] as const;
+    }
+
+
+export const getGetNewsletterFunnelReportQueryOptions = <TData = Awaited<ReturnType<typeof getNewsletterFunnelReport>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getNewsletterFunnelReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetNewsletterFunnelReportQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getNewsletterFunnelReport>>> = ({ signal }) => getNewsletterFunnelReport({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getNewsletterFunnelReport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetNewsletterFunnelReportQueryResult = NonNullable<Awaited<ReturnType<typeof getNewsletterFunnelReport>>>
+export type GetNewsletterFunnelReportQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read the aggregate newsletter confirmation funnel for administrators
+ */
+
+export function useGetNewsletterFunnelReport<TData = Awaited<ReturnType<typeof getNewsletterFunnelReport>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getNewsletterFunnelReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetNewsletterFunnelReportQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

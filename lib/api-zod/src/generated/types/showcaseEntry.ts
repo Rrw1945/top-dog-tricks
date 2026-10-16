@@ -5,8 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ShowcaseEntryCategory } from './showcaseEntryCategory';
 
 export interface ShowcaseEntry {
+  category?: ShowcaseEntryCategory;
+  /** @nullable */
+  sourceCredit?: string | null;
+  /** @nullable */
+  sourceUrl?: string | null;
+  prizeEligible?: boolean;
   id: number;
   dogName: string;
   /** @nullable */
@@ -20,6 +27,7 @@ export interface ShowcaseEntry {
   voiceoverObjectPath?: string | null;
   /** @nullable */
   punchline?: string | null;
+  /** First showcase publication time, preserved through edits and reprocessing. The epoch (1970-01-01T00:00:00Z) denotes an unknown historical publication date; ties sort by descending submission ID. */
   publishedAt: Date;
   likeCount: number;
 }
