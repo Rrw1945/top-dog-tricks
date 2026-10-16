@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": [
-    "src/lib/analytics.ts",
-    "src/lib/analytics.type-contract.ts"
-  ],
-  "exclude": [],
-  "references": []
-}
