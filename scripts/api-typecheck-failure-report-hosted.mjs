@@ -37,6 +37,12 @@ jobs:
       API_TYPECHECK_TEST_RECOVERY_HANDOFF_PATH: ""
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/
+            /.github/workflows/native-process-identity.yml
+            /package.json
       - uses: pnpm/action-setup@v4
         with:
           version: 10
