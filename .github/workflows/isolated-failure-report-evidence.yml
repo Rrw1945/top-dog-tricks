@@ -18,6 +18,7 @@ jobs:
     env:
       API_TYPECHECK_FAILURE_REPORT_DIR: ${{ github.workspace }}/generated-artifacts/quoted path fixture/api-typecheck-failures/native-${{ github.run_id }}-${{ github.run_attempt }}-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
       API_TYPECHECK_TEST_RECOVERY_HANDOFF_PATH: ""
+      API_TYPECHECK_NATIVE_PROBE_FAILURE: isolated-fixture
     steps:
       - uses: actions/checkout@v4
         with:

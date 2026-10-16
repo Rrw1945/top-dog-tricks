@@ -36,6 +36,7 @@ jobs:
     env:
       API_TYPECHECK_FAILURE_REPORT_DIR: ${directory}
       API_TYPECHECK_TEST_RECOVERY_HANDOFF_PATH: ""
+      API_TYPECHECK_NATIVE_PROBE_FAILURE: isolated-fixture
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,7 +115,7 @@ ${body}
       private: true, type: "module",
       scripts: {
         "check:api-typecheck-rebuilds-libs:process-identity:native":
-          `node scripts/check-api-typecheck-rebuilds-db.mjs ${attempt === 1 ? "--run-recovery-lock-handoff-fixture" : "--test-process-identity"}`,
+          `node scripts/check-api-typecheck-rebuilds-db.mjs ${attempt === 1 ? "--run-recovery-lock-handoff-fixture" : "--record-native-process-probe-failure"}`,
       },
     }));
     // Sibling JSON and non-JSON files must never enter the current artifact.
