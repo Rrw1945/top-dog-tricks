@@ -1,0 +1,64 @@
+name: Isolated native failure report experiment
+on:
+  push:
+    branches: [test/native-failure-report-evidence]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  process-identity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      API_TYPECHECK_FAILURE_REPORT_DIR: ${{ github.workspace }}/generated-artifacts/quoted path fixture/api-typecheck-failures/native-${{ github.run_id }}-${{ github.run_attempt }}-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
+      API_TYPECHECK_TEST_RECOVERY_HANDOFF_PATH: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Restore earlier report on successful rerun
+        if: ${{ github.run_attempt != '1' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: api-typecheck-failures-native-${{ github.run_id }}-1-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
+          path: earlier report
+      - name: Prepare isolated harness package
+        run: node scripts/api-typecheck-failure-report-hosted.mjs prepare
+      - name: Run isolated harness with native command
+        id: harness
+        working-directory: isolated harness
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/native.json"
+      - name: Check report isolation and original outcome
+        if: ${{ always() }}
+        env:
+          HARNESS_OUTCOME: ${{ steps.harness.outcome }}
+          HARNESS_CONCLUSION: ${{ steps.harness.conclusion }}
+        run: node scripts/api-typecheck-failure-report-hosted.mjs verify
+      - name: Upload API typecheck failure reports
+        id: report-upload
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-typecheck-failures-native-${{ github.run_id }}-${{ github.run_attempt }}-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
+          path: ${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Verify upload result
+        if: ${{ always() }}
+        env:
+          REPORT_ARTIFACT_ID: ${{ steps.report-upload.outputs.artifact-id }}
+          REPORT_UPLOAD_OUTCOME: ${{ steps.report-upload.outcome }}
+        run: node scripts/api-typecheck-failure-report-hosted.mjs verify-upload
+
