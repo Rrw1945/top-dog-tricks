@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -1378,14 +1379,14 @@ jobs:
         with:
           node-version: 24
 `;
-  const runChecker = async (pullRequest, push) => {
+  const runChecker = async (pullRequest, push, entryRoot = repositoryRoot) => {
     await writeFile(
       path.join(repositoryRoot, ".github/workflows", workflowName),
       makeWorkflow(pullRequest, push),
     );
     const result = spawnSync(
       process.execPath,
-      [path.join(repositoryRoot, "scripts/check-node-support-matrix.mjs")],
+      [path.join(entryRoot, "scripts/check-node-support-matrix.mjs")],
       {
         cwd: repositoryRoot,
         encoding: "utf8",
@@ -1419,6 +1420,21 @@ jobs:
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, "");
     assert.match(result.stdout, /^Node support matches \d+ workflow\(s\): 22, 24\n$/);
+  });
+
+  await t.test("CLI runs through a directory alias instead of silently succeeding", async () => {
+    // Reproduce macOS /var -> /private/var on every host.
+    const alias = `${repositoryRoot}-alias`;
+    await symlink(await realpath(repositoryRoot), alias, "junction");
+    t.after(() => rm(alias, { recursive: true, force: true }));
+    const rejected = await runChecker(referenceOnly, both, alias);
+    assert.equal(rejected.status, 1, rejected.stderr);
+    assert.match(rejected.stderr, /pull_request\.paths must include "config\/node-version\.txt"/);
+    assert.equal(rejected.stdout, "");
+    const accepted = await runChecker(both, both, alias);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(accepted.stderr, "");
+    assert.match(accepted.stdout, /^Node support matches \d+ workflow\(s\): 22, 24\n$/);
   });
 });
 
@@ -1607,7 +1623,10 @@ jobs:
 
 for (const absolute of [false, true]) {
   test(`tracks a directory link before .. in an ${absolute ? "absolute" : "relative"} link target`, async () => {
-    const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), "node-link-parent-"));
+    // Absolute targets must begin at the canonical repository boundary, not an
+    // OS-level alias outside it (macOS exposes /private/var through /var).
+    // Do not realpath the target: that would erase the alias/.. traversal tested here.
+    const repositoryRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), "node-link-parent-")));
     const workflow = (filter) => `
 on:
   pull_request:

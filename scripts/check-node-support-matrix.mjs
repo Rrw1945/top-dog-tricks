@@ -2942,7 +2942,7 @@ export async function loadWorkflowFiles({ repositoryRoot = workspaceRoot } = {})
 
 const isMainModule =
   process.argv[1] &&
-  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  pathToFileURL(await realpath(process.argv[1])).href === import.meta.url;
 
 if (isMainModule) {
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
