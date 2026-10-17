@@ -103,6 +103,8 @@ jobs:
         run: pnpm run test:frontend-typecheck-refreshes-api-client
       - name: Verify frontend typecheck refreshes API client declarations
         run: pnpm run check:frontend-typecheck-refreshes-api-client
+      - name: Verify older frontend payloads and binary media compatibility
+        run: pnpm --filter @workspace/top-dog-tricks exec vitest run --config vitest.config.ts src/lib/legacy-consumer-contracts.test.ts src/lib/utils.test.ts
 
   standard-recovery:
     name: Standard recovery on Node.js ${{ matrix.node }}

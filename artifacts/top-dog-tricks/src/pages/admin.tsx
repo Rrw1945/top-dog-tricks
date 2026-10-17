@@ -1,3 +1,4 @@
+import { storedObjectRouteSuffix } from '@/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check, ChevronRight, Clock3, FileSignature, FileVideo, Filter, LogIn, MessageSquareText, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -238,7 +239,7 @@ function AdminLoading() {
 }
 
 function useStoredObjectUrl(objectPath?: string | null) {
-  const path = objectPath ?? '';
+  const path = storedObjectRouteSuffix(objectPath);
   const result = useGetStoredObject(path, { query: { queryKey: getGetStoredObjectQueryKey(path), enabled: Boolean(path) } });
   const [url, setUrl] = useState('');
   useEffect(() => {
