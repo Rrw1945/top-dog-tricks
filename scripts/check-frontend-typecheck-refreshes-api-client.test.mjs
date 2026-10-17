@@ -822,17 +822,19 @@ test("keeps frontend consumers isolated and restores every fixture after success
     },
   );
 
-  const expectedFrontends = [...existingFrontends].sort((left, right) =>
+  // A partial hosted checkout may contain only one real frontend. Supply the
+  // second consumer ourselves rather than assuming two particular apps exist.
+  await withTemporaryFrontend(async ({ packageName }) => {
+  const expectedFrontends = [...existingFrontends, packageName].sort((left, right) =>
     left.localeCompare(right),
   );
-  const laterFrontend = expectedFrontends[1];
-  const frontendFixturePaths = [
-    "artifacts/ghost-town-rescue/src/api-client-refresh-regression.ts",
-    "artifacts/top-dog-tricks/src/api-client-refresh-regression.ts",
-  ].map((relativePath) => path.join(workspaceRoot, relativePath));
+  const laterFrontend = expectedFrontends.at(-1);
+  const frontendFixturePaths = listWorkspacePackages()
+    .filter((workspacePackage) => expectedFrontends.includes(workspacePackage.name))
+    .map((workspacePackage) => path.join(workspacePackage.path, "src/api-client-refresh-regression.ts"));
 
-  assert.equal(expectedFrontends.length, 2);
-  assert.equal(laterFrontend, "@workspace/top-dog-tricks");
+  assert.ok(expectedFrontends.length >= 2);
+  assert.equal(frontendFixturePaths.length, expectedFrontends.length);
 
   for (const githubActions of ["false", "true"]) {
     const { result, invocations } = await runRefreshCheck({
@@ -862,7 +864,7 @@ test("keeps frontend consumers isolated and restores every fixture after success
     assert.equal(invocations.length, expectedFrontends.length * 5);
     const hookAfterStart = expectedFrontends.length * 3;
     const earlierConsumerInvocation = invocations[hookAfterStart];
-    const laterConsumerInvocation = invocations[hookAfterStart + 1];
+    const laterConsumerInvocation = invocations[hookAfterStart + expectedFrontends.length - 1];
     assert.equal(earlierConsumerInvocation.frontendName, expectedFrontends[0]);
     assert.match(
       earlierConsumerInvocation.fixture,
@@ -883,6 +885,7 @@ test("keeps frontend consumers isolated and restores every fixture after success
     assert.equal(await readFile(generatedSchemaPath, "utf8"), originalSchema);
     assert.equal(await readFile(generatedClientPath, "utf8"), originalClient);
   }
+  });
 });
 
 test("discovers API-client frontends from every supported dependency section", async () => {
