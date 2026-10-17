@@ -50,8 +50,26 @@ import {
 } from "../lib/subscriberTokens";
 import { normalizeSubscriberEmails } from "../../../../lib/db/scripts/normalize-subscriber-emails.mjs";
 
+// Fixture-only signing material, never a workspace or production credential.
+process.env.SESSION_SECRET = "subscriber-notifications-test-only-signing-key";
+const originalFetch = globalThis.fetch;
+let externalFetchAttempts = 0;
+const fetchGuard = mock.method(globalThis, "fetch", (
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+) => {
+  const url = new URL(input instanceof Request ? input.url : input.toString());
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
+    externalFetchAttempts++;
+    throw new Error("Subscriber fixtures must not make external HTTP requests");
+  }
+  return originalFetch(input, init);
+});
+
 after(async () => {
+  fetchGuard.mock.restore();
   await pool.end();
+  assert.equal(externalFetchAttempts, 0, "Subscriber tests attempted external HTTP");
 });
 
 class CapturedLogStream extends Writable {
