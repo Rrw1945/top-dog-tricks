@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Submission } from '@workspace/db';
-import { textToSpeech } from '@workspace/integrations-openai-ai-server/audio';
+import type { textToSpeech } from '@workspace/integrations-openai-ai-server/audio';
 import { ObjectStorageService } from './objectStorage';
 import { persistVideoThumbnail } from './durableVideoThumbnail';
 import { createBackgroundMusic, replacementAudioFilter } from './backgroundMusic';
@@ -157,7 +157,11 @@ export async function processSubmissionMedia(
     readFile,
     writeFile,
     run,
-    textToSpeech,
+    // Subscriber routes import this module too. Only initialize AI when used.
+    textToSpeech: async (...args) => {
+      const { textToSpeech } = await import('@workspace/integrations-openai-ai-server/audio');
+      return textToSpeech(...args);
+    },
     saveObject: (data, contentType, extension) =>
       objectStorage.saveObjectEntity(data, contentType, extension),
     ...dependencyOverrides,

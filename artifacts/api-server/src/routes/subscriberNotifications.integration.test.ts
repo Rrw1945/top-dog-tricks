@@ -2749,7 +2749,8 @@ test("welcome recovery stays bounded with a large mixed subscriber backlog", asy
           'unsubscribed',
           'delivered',
           'failed',
-          'claimed'
+          'claimed',
+          'active_claim'
         ]::text[]) AS populations(population)
         CROSS JOIN generate_series(1, $2::int) AS subscribers(subscriber)
       `,

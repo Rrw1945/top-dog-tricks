@@ -200,11 +200,18 @@ jobs:
       - name: Create the subscriber notification test schema
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/subscriber_notifications
-        run: pnpm --filter @workspace/db exec drizzle-kit push --config ./drizzle.config.ts
+        run: |
+          pnpm --filter @workspace/db exec node --test scripts/setup-subscriber-test-schema.test.mjs
+          pnpm --filter @workspace/db exec node scripts/setup-subscriber-test-schema.mjs
       - name: Run subscriber notification regressions on Node.js ${{ matrix.node }}
         id: subscriber-notifications
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/subscriber_notifications
+          # Prove unrelated route imports do not depend on provisioned AI clients.
+          AI_INTEGRATIONS_OPENAI_BASE_URL: ""
+          AI_INTEGRATIONS_OPENAI_API_KEY: ""
+          AI_INTEGRATIONS_GEMINI_BASE_URL: ""
+          AI_INTEGRATIONS_GEMINI_API_KEY: ""
         run: |
           set -o pipefail
           node --version

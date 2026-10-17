@@ -417,7 +417,14 @@ test("subscriber matrix feeds the stable required check and reports version-labe
   assert.match(subscriberJob, /node: \[22, 24\]/);
   assert.match(subscriberJob, /node-version: \$\{\{ matrix\.node \}\}/);
   assert.match(subscriberJob, /image: postgres:16/);
-  assert.match(subscriberJob, /drizzle-kit push/);
+  assert.match(subscriberJob, /node scripts\/setup-subscriber-test-schema\.mjs/);
+  assert.match(subscriberJob, /node --test scripts\/setup-subscriber-test-schema\.test\.mjs/);
+  assert.doesNotMatch(subscriberJob, /exec drizzle-kit push/);
+  for (const provider of ["OPENAI", "GEMINI"]) {
+    for (const setting of ["BASE_URL", "API_KEY"]) {
+      assert.ok(subscriberJob.includes(`AI_INTEGRATIONS_${provider}_${setting}: ""`));
+    }
+  }
   assert.match(subscriberJob, /set -o pipefail/);
   assert.match(subscriberJob, /run test:subscriber-notifications 2>&1/);
   assert.match(subscriberJob, /steps\.subscriber-notifications\.outcome == 'failure'/);

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Submission } from "@workspace/db";
-import { ai } from "@workspace/integrations-gemini-ai";
+import type { ai } from "@workspace/integrations-gemini-ai";
 import { batchProcess } from "@workspace/integrations-gemini-ai/batch";
 import { ObjectStorageService } from "./objectStorage";
 import {
@@ -177,7 +177,11 @@ export async function analyzeSubmissionVideo(
     readFile,
     writeFile,
     run,
-    generateContent: ai.models.generateContent.bind(ai.models),
+    // Do not require AI credentials when importing unrelated API routes.
+    generateContent: async (request) => {
+      const { ai } = await import("@workspace/integrations-gemini-ai");
+      return ai.models.generateContent(request);
+    },
     waitForRateLimit,
     retryDelay: (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
