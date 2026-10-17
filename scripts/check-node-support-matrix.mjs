@@ -1,6 +1,6 @@
 import { lstat, readlink, realpath, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -2942,7 +2942,8 @@ export async function loadWorkflowFiles({ repositoryRoot = workspaceRoot } = {})
 
 const isMainModule =
   process.argv[1] &&
-  pathToFileURL(await realpath(process.argv[1])).href === import.meta.url;
+  (await realpath(process.argv[1])) ===
+    (await realpath(fileURLToPath(import.meta.url)));
 
 if (isMainModule) {
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
