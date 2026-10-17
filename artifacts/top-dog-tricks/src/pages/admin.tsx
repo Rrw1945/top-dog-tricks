@@ -1,5 +1,5 @@
-import { storedObjectRouteSuffix } from '@/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
+import { storedObjectRouteSuffix } from '@/lib/utils';
 import { ArrowLeft, Check, ChevronRight, Clock3, FileSignature, FileVideo, Filter, LogIn, MessageSquareText, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -20,7 +20,7 @@ import {
   useListSubmissions,
   useUpdateSubmission,
 } from '@workspace/api-client-react';
-import type { Submission } from '@workspace/api-client-react';
+import type { ReviewQueueEntry, Submission } from '@workspace/api-client-react';
 import { AdminRail, Button, BrandMark, SectionKicker, StatusPill } from '@/components/top-dog';
 
 type FilterValue = 'all' | 'pending' | 'approved' | 'needs_edit' | 'rejected';
@@ -38,17 +38,23 @@ export default function Admin() {
     const parsed = raw ? Number(raw) : NaN;
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
   });
-  const params = useMemo(() => filter === 'all' ? {} : { status: filter }, [filter]);
+  const [search, setSearch] = useState('');
+  const [cursor, setCursor] = useState<number | undefined>();
+  const [cursorHistory, setCursorHistory] = useState<Array<number | undefined>>([]);
+  const shortSearch = search.trim().length > 0 && Array.from(search.trim()).length < 3;
+  const params = useMemo(() => ({
+    limit: 50, cursor, search: search.trim(),
+    ...(filter === 'all' ? {} : { status: filter }),
+  }), [filter, cursor, search]);
   const summary = useGetDashboardSummary({ query: { enabled: Boolean(session.data?.authenticated), queryKey: getGetDashboardSummaryQueryKey() } });
-  const list = useListSubmissions(params, { query: { enabled: Boolean(session.data?.authenticated), queryKey: getListSubmissionsQueryKey(params) } });
+  const list = useListSubmissions(params, { query: { enabled: Boolean(session.data?.authenticated) && !shortSearch, queryKey: getListSubmissionsQueryKey(params), refetchInterval: 30_000 } });
   const detail = useGetSubmission(selectedId ?? 0, { query: { enabled: Boolean(session.data?.authenticated && selectedId), queryKey: getGetSubmissionQueryKey(selectedId ?? 0), refetchInterval: 5_000 } });
   const update = useUpdateSubmission();
   const analyze = useAnalyzeSubmission();
-  const [search, setSearch] = useState('');
 
   function refresh() {
     void summary.refetch();
-    void list.refetch();
+    if (!shortSearch) void list.refetch();
     if (selectedId) void detail.refetch();
   }
 
@@ -59,11 +65,10 @@ export default function Admin() {
   if (session.isLoading) return <AdminLoading />;
   if (!session.data?.authenticated) return <LoginScreen mutation={login} />;
 
-  const filtered = (list.data ?? []).filter((entry) => {
-    const query = search.trim().toLowerCase();
-    return !query || [entry.dogName, entry.ownerName, entry.trickName].some((value) => value.toLowerCase().includes(query));
-  });
-  const selected = detail.data ?? (list.data ?? []).find((entry) => entry.id === selectedId) ?? null;
+  const filtered = shortSearch ? [] : list.data?.records ?? [];
+  // Queue records intentionally omit private/detail fields. Never use one as a
+  // full submission or render a previous selection while its replacement loads.
+  const selected = detail.data?.id === selectedId ? detail.data : null;
 
   return (
     <div className="paper-grain flex min-h-[100dvh] bg-background text-foreground">
@@ -82,7 +87,7 @@ export default function Admin() {
                     {
                       onSuccess: (next) => {
                         queryClient.setQueryData(getGetSubmissionQueryKey(next.id), next);
-                        void queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey(params) });
+                        void queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey() });
                         void queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
                       },
                     },
@@ -112,18 +117,29 @@ export default function Admin() {
             <section className="min-w-0 rounded-2xl border border-border bg-card">
               <div className="border-b border-border p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-extrabold">Review queue</h2><p className="mt-1 text-xs text-muted-foreground">{filtered.length} {filtered.length === 1 ? 'entry' : 'entries'} in this view</p></div><Filter size={17} className="mt-1 text-primary" /></div>
-                <div className="relative mt-5"><Search size={16} className="absolute left-3 top-3 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} className="field-shell pl-9" placeholder="Search dog, owner, trick" data-testid="input-search-submissions" /></div>
-                <div className="mt-4 flex gap-1 overflow-x-auto pb-1">{(['all', 'pending', 'approved', 'needs_edit', 'rejected'] as FilterValue[]).map((value) => <button key={value} onClick={() => setFilter(value)} className={`whitespace-nowrap rounded-lg px-2.5 py-2 text-[11px] font-extrabold ${filter === value ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted'}`} data-testid={`button-filter-${value}`}>{value === 'all' ? 'All' : value === 'needs_edit' ? 'Needs edit' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
+                <div className="relative mt-5"><Search size={16} className="absolute left-3 top-3 text-muted-foreground" /><input value={search} maxLength={200} aria-label="Search review queue" onChange={(event) => { setSearch(event.target.value); setCursor(undefined); setCursorHistory([]); }} className="field-shell pl-9" placeholder="Search dog, owner, trick" data-testid="input-search-submissions" /></div>
+                <div className="mt-4 flex gap-1 overflow-x-auto pb-1">{(['all', 'pending', 'approved', 'needs_edit', 'rejected'] as FilterValue[]).map((value) => <button key={value} onClick={() => { setFilter(value); setCursor(undefined); setCursorHistory([]); }} className={`whitespace-nowrap rounded-lg px-2.5 py-2 text-[11px] font-extrabold ${filter === value ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted'}`} data-testid={`button-filter-${value}`}>{value === 'all' ? 'All' : value === 'needs_edit' ? 'Needs edit' : value[0].toUpperCase() + value.slice(1)}</button>)}</div>
               </div>
+              <nav aria-label="Review queue pages" className="flex items-center justify-between border-t border-border p-4">
+                <Button disabled={shortSearch || list.isFetching || cursorHistory.length === 0} onClick={() => {
+                  setCursor(cursorHistory[cursorHistory.length - 1]);
+                  setCursorHistory((history) => history.slice(0, -1));
+                }} data-testid="button-queue-previous">Previous</Button>
+                <Button disabled={shortSearch || list.isFetching || list.isError || !list.data?.nextCursor} onClick={() => {
+                  if (!list.data?.nextCursor) return;
+                  setCursorHistory((history) => [...history, cursor]);
+                  setCursor(list.data.nextCursor);
+                }} data-testid="button-queue-next">Next</Button>
+              </nav>
               <div className="max-h-[calc(100dvh-360px)] overflow-y-auto p-2">
-                {list.isLoading ? <QueueSkeleton /> : list.isError ? <ErrorState onRetry={() => void list.refetch()} /> : filtered.length === 0 ? <EmptyQueue filter={filter} /> : filtered.map((entry) => <SubmissionRow key={entry.id} entry={entry} selected={selectedId === entry.id} onClick={() => setSelectedId(entry.id)} />)}
+                {shortSearch ? <p className="p-4 text-sm">Enter at least 3 characters, or clear the search to browse entries.</p> : list.isLoading ? <QueueSkeleton /> : list.isError ? <ErrorState onRetry={() => void list.refetch()} /> : filtered.length === 0 ? <EmptyQueue filter={filter} /> : filtered.map((entry) => <SubmissionRow key={entry.id} entry={entry} selected={selectedId === entry.id} onClick={() => setSelectedId(entry.id)} />)}
               </div>
             </section>
             <section className="min-w-0 space-y-4">
               {selected ? <>
-                <AiReviewPanel submission={selected} analyze={analyze} update={update} onSaved={(next) => { queryClient.setQueryData(getGetSubmissionQueryKey(next.id), next); void queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey(params) }); }} />
-                <ReviewDetail submission={selected} update={update} onSaved={(next) => { queryClient.setQueryData(getGetSubmissionQueryKey(next.id), next); void queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey(params) }); void queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() }); }} />
-              </> : <DetailEmpty />}
+                <AiReviewPanel submission={selected} analyze={analyze} update={update} onSaved={(next) => { queryClient.setQueryData(getGetSubmissionQueryKey(next.id), next); void queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey() }); }} />
+                <ReviewDetail submission={selected} update={update} onSaved={(next) => { queryClient.setQueryData(getGetSubmissionQueryKey(next.id), next); void queryClient.invalidateQueries({ queryKey: getListSubmissionsQueryKey() }); void queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() }); }} />
+              </> : selectedId && detail.isError ? <ErrorState onRetry={() => void detail.refetch()} /> : selectedId && detail.isLoading ? <p>Loading entry…</p> : <DetailEmpty />}
             </section>
           </div>
         </div>
@@ -195,7 +211,7 @@ function SummaryCard({ label, value, accent, icon, loading }: { label: string; v
   return <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-5"><div className={`absolute right-0 top-0 h-1.5 w-20 ${accent}`} /><div className="flex items-center justify-between text-muted-foreground"><span className="text-xs font-bold">{label}</span><span>{icon}</span></div>{loading ? <div className="skeleton mt-4 h-9 w-16 rounded-lg" /> : <div className="mt-3 text-4xl font-extrabold tracking-[-.06em]" data-testid={`text-summary-${label.toLowerCase().replace(/\s/g, '-')}`}>{value ?? 0}</div>}</div>;
 }
 
-function SubmissionRow({ entry, selected, onClick }: { entry: Submission; selected: boolean; onClick: () => void }) {
+function SubmissionRow({ entry, selected, onClick }: { entry: ReviewQueueEntry; selected: boolean; onClick: () => void }) {
   return <button onClick={onClick} className={`group flex w-full items-center gap-3 rounded-xl p-3 text-left ${selected ? 'bg-accent/55' : 'hover:bg-muted/70'}`} data-testid={`button-submission-${entry.id}`}><div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl text-sm font-extrabold ${selected ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'}`}>{entry.dogName.slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-extrabold">{entry.dogName}</span><StatusPill status={entry.status} /></div><div className="mt-1 truncate text-xs text-muted-foreground">{entry.trickName} · {entry.ownerName}</div></div><ChevronRight size={16} className={`shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 ${selected ? 'text-primary' : ''}`} /></button>;
 }
 
