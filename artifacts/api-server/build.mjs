@@ -9,6 +9,13 @@ import { rm } from "node:fs/promises";
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
+const resolveApiZod = createRequire(
+  path.resolve(artifactDir, "../../lib/api-zod/package.json"),
+);
+const zodEntry = path.resolve(
+  path.dirname(resolveApiZod.resolve("zod/package.json")),
+  "index.js",
+);
 
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
@@ -27,6 +34,11 @@ async function buildAll() {
     // Examples of unbundleable packages:
     // - uses native modules and loads them dynamically (e.g. sharp)
     // - use path traversal to read files (e.g. @google-cloud/secret-manager loads sibling .proto files)
+    alias: {
+      // Keep generated API schemas and drizzle-zod on one Zod entry point.
+      zod: zodEntry,
+      "zod/v4": zodEntry,
+    },
     external: [
       "*.node",
       "sharp",

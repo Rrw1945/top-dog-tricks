@@ -1,3 +1,4 @@
+import { storedObjectRouteSuffix } from '@/lib/utils';
 import { ArrowLeft, ArrowRight, Film, Play, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
@@ -42,7 +43,8 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
 }
 
 function useStoredObjectUrl(objectPath: string) {
-  const result = useGetStoredObject(objectPath, { query: { queryKey: getGetStoredObjectQueryKey(objectPath), enabled: Boolean(objectPath) } });
+  const path = storedObjectRouteSuffix(objectPath);
+  const result = useGetStoredObject(path, { query: { queryKey: getGetStoredObjectQueryKey(path), enabled: Boolean(path) } });
   const [url, setUrl] = useState('');
   useEffect(() => {
     if (!result.data) return;

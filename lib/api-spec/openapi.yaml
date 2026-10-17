@@ -35,6 +35,7 @@ paths:
       operationId: requestUploadUrl
       tags: [storage]
       summary: Request a direct upload URL
+      description: Creates a single-use resumable storage session. PUT exactly the declared bytes to uploadURL. MP4/MOV videos are limited to 524288000 bytes (500 MiB); PNG signatures to 2097152 bytes (2 MiB). Stored media is independently checked before entry acceptance.
       requestBody:
         required: true
         content:
@@ -55,6 +56,7 @@ paths:
       operationId: getStoredObject
       tags: [storage]
       summary: Serve a stored media object
+      description: The optional preview=1 query returns a generated JPEG video thumbnail under the same authorization checks as the source object.
       parameters:
         - name: objectPath
           in: path
@@ -74,6 +76,31 @@ paths:
       tags: [submissions]
       summary: List contest submissions for the admin
       parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [contest, just_for_fun, unclassified]
+        - name: search
+          in: query
+          description: Review-only case-insensitive literal substring across dog, owner, OR trick name. After trimming whitespace, use at least 3 Unicode characters or leave blank to browse. Short nonblank searches return 400 before querying the archive.
+          schema:
+            type: string
+            maxLength: 200
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          description: Exclusive entry ID boundary, newest IDs first.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
         - name: status
           in: query
           required: false
@@ -81,13 +108,13 @@ paths:
             $ref: "#/components/schemas/SubmissionStatus"
       responses:
         "200":
-          description: Submission list
+          description: Bounded review queue summaries
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Submission"
+                $ref: "#/components/schemas/ReviewQueuePage"
+        "400":
+          description: Invalid search or pagination
         "401":
           description: Admin authentication required
     post:
@@ -109,6 +136,8 @@ paths:
                 $ref: "#/components/schemas/Submission"
         "400":
           description: Invalid submission
+        "403":
+          description: First contest closed (code CONTEST_CLOSED). Entries must reach the server before January 1, 2027 at 00:00 America/Phoenix (07:00 UTC).
   /submissions/{id}:
     get:
       operationId: getSubmission
@@ -310,6 +339,104 @@ paths:
                 $ref: "#/components/schemas/DashboardSummary"
         "401":
           description: Admin authentication required
+  /admin/contestants:
+    get:
+      operationId: getAdminContestants
+      tags: [admin]
+      summary: Search submission contacts for administrators
+      parameters:
+        - name: search
+          in: query
+          description: Case-insensitive substring of owner name, dog name or email
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          description: Return submissions with IDs less than this ID
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Bounded contacts page, one row per submission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminContestantsPage"
+        "400":
+          description: Invalid search or pagination parameters
+        "401":
+          description: Admin authentication required
+  /admin/welcome-emails:
+    get:
+      operationId: getWelcomeEmailAdminRecords
+      tags: [admin]
+      summary: Show welcome email delivery states for administrators
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of operational welcome email records to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          description: Return records after this page cursor
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Welcome email delivery states
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeEmailAdminRecordsPage"
+        "400":
+          description: Invalid pagination parameters
+        "401":
+          description: Admin authentication required
+  /admin/deferred-confirmations:
+    get:
+      operationId: getDeferredConfirmationAdminStatus
+      tags: [admin]
+      summary: Show aggregate deferred confirmation retry status for administrators
+      responses:
+        "200":
+          description: Aggregate status of pending confirmation attempts in an active retry window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferredConfirmationAdminStatus"
+        "401":
+          description: Admin authentication required
+  /admin/newsletter-funnel:
+    get:
+      operationId: getNewsletterFunnelReport
+      tags: [admin]
+      summary: Read the aggregate newsletter confirmation funnel for administrators
+      responses:
+        "200":
+          description: Aggregate newsletter funnel report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsletterFunnelReport"
+        "401":
+          description: Admin authentication required
+        "503":
+          description: Analytics provider unavailable
   /admin/login:
     post:
       operationId: adminLogin
@@ -372,9 +499,10 @@ components:
         size:
           type: integer
           minimum: 1
+          maximum: 524288000
         contentType:
           type: string
-          minLength: 1
+          enum: [video/mp4, video/quicktime, image/png]
       required: [name, size, contentType]
     UploadResponse:
       type: object
@@ -447,9 +575,68 @@ components:
         - videoFileName
         - videoContentType
         - signatureObjectPath
+    AdminContestant:
+      type: object
+      required: [id, ownerName, dogName, email, phone, submittedAt, status]
+      properties:
+        id: { type: integer }
+        ownerName: { type: string }
+        dogName: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        submittedAt: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [pending, approved, needs_edit, rejected]
+    AdminContestantsPage:
+      type: object
+      required: [records, nextCursor]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminContestant"
+        nextCursor:
+          type: ["string", "null"]
+    ReviewQueueEntry:
+      type: object
+      required: [id, dogName, ownerName, trickName, status]
+      properties:
+        id:
+          type: integer
+        dogName:
+          type: string
+        ownerName:
+          type: string
+        trickName:
+          type: string
+        status:
+          $ref: "#/components/schemas/SubmissionStatus"
+    ReviewQueuePage:
+      type: object
+      required: [records, nextCursor]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewQueueEntry"
+        nextCursor:
+          type: [integer, "null"]
     Submission:
       type: object
       properties:
+        soundtrack:
+          type: string
+          enum: [replace_music, voiceover_only]
+        category:
+          type: string
+          enum: [contest, just_for_fun, unclassified]
+        sourceCredit:
+          type: ["string", "null"]
+        sourceUrl:
+          type: ["string", "null"]
+        prizeEligible:
+          type: boolean
         id:
           type: integer
         ownerName:
@@ -551,6 +738,19 @@ components:
     SubmissionUpdate:
       type: object
       properties:
+        soundtrack:
+          type: string
+          enum: [replace_music, voiceover_only]
+        category:
+          type: string
+          enum: [contest, just_for_fun, unclassified]
+        sourceCredit:
+          type: ["string", "null"]
+          maxLength: 200
+        sourceUrl:
+          type: ["string", "null"]
+          maxLength: 2000
+          pattern: '^https?://'
         status:
           $ref: "#/components/schemas/SubmissionStatus"
         punchline:
@@ -564,6 +764,15 @@ components:
     ShowcaseEntry:
       type: object
       properties:
+        category:
+          type: string
+          enum: [contest, just_for_fun, unclassified]
+        sourceCredit:
+          type: ["string", "null"]
+        sourceUrl:
+          type: ["string", "null"]
+        prizeEligible:
+          type: boolean
         id:
           type: integer
         dogName:
@@ -585,6 +794,7 @@ components:
         publishedAt:
           type: string
           format: date-time
+          description: First showcase publication time, preserved through edits and reprocessing. The epoch (1970-01-01T00:00:00Z) denotes an unknown historical publication date; ties sort by descending submission ID.
         likeCount:
           type: integer
       required:
@@ -652,6 +862,180 @@ components:
         rejected:
           type: integer
       required: [total, pending, approved, needsEdit, rejected]
+    WelcomeEmailAdminStatus:
+      type: string
+      enum: [active_claim, expired_claim, failed, permanently_failed]
+    WelcomeEmailAdminRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        status:
+          $ref: "#/components/schemas/WelcomeEmailAdminStatus"
+        claimedAt:
+          type: ["string", "null"]
+          format: date-time
+        failedAt:
+          type: ["string", "null"]
+          format: date-time
+        lastError:
+          type: ["string", "null"]
+        attemptCount:
+          type: integer
+      required: [id, email, status, claimedAt, failedAt, lastError, attemptCount]
+    WelcomeEmailRecoveryState:
+      type: string
+      enum: [clear, healthy, attention]
+    WelcomeEmailAdminBacklog:
+      type: object
+      properties:
+        retryableCount:
+          type: integer
+        oldestRetryAt:
+          type: ["string", "null"]
+          format: date-time
+        oldestRetryAgeMinutes:
+          type: ["integer", "null"]
+        repeatedFailureCount:
+          type: integer
+        state:
+          $ref: "#/components/schemas/WelcomeEmailRecoveryState"
+      required:
+        [retryableCount, oldestRetryAt, oldestRetryAgeMinutes, repeatedFailureCount, state]
+    WelcomeEmailAdminRecordsPage:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/WelcomeEmailAdminRecord"
+        nextCursor:
+          type: ["string", "null"]
+        backlog:
+          $ref: "#/components/schemas/WelcomeEmailAdminBacklog"
+      required: [records, nextCursor, backlog]
+    DeferredConfirmationAdminStatus:
+      type: object
+      properties:
+        deferredCount:
+          type: integer
+          description: Number of pending confirmation attempts currently inside their persisted retry window
+        nextRetryAt:
+          type: ["string", "null"]
+          format: date-time
+          description: Earliest persisted retry time among currently deferred confirmation attempts
+      required: [deferredCount, nextRetryAt]
+    NewsletterFunnelSource:
+      type: string
+      enum: [initial, replacement]
+    NewsletterFunnelRow:
+      type: object
+      properties:
+        source:
+          $ref: "#/components/schemas/NewsletterFunnelSource"
+        requests:
+          type: integer
+        confirmations:
+          type: integer
+        conversionRatePercent:
+          type: ["number", "null"]
+        ci95LowerPercent:
+          type: ["number", "null"]
+        ci95UpperPercent:
+          type: ["number", "null"]
+      required: [source, requests, confirmations, conversionRatePercent, ci95LowerPercent, ci95UpperPercent]
+    NewsletterFunnelComparison:
+      type: object
+      properties:
+        result:
+          type: string
+        liftPoints:
+          type: ["number", "null"]
+        liftCi95LowerPoints:
+          type: ["number", "null"]
+        liftCi95UpperPoints:
+          type: ["number", "null"]
+      required: [result, liftPoints, liftCi95LowerPoints, liftCi95UpperPoints]
+    NewsletterFunnelCoverageCohort:
+      type: object
+      properties:
+        cohort:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        coverageStatus:
+          type: string
+          enum: [coverage_unavailable, missing_coverage, zero_requests, covered]
+        requests:
+          type: integer
+      required: [cohort, coverageStatus, requests]
+    NewsletterFunnelCoverage:
+      type: object
+      properties:
+        startDate:
+          type: ["string", "null"]
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        status:
+          type: string
+          enum: [recorded, unavailable]
+        auditTrail:
+          type: array
+          items:
+            type: object
+            properties:
+              coverageStartDate:
+                type: ["string", "null"]
+                pattern: '^\d{4}-\d{2}-\d{2}$'
+              reason:
+                type: string
+                minLength: 1
+            required: [coverageStartDate, reason]
+        cohorts:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewsletterFunnelCoverageCohort"
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+                enum: [missing_events, coverage_regression]
+              cohorts:
+                type: array
+                items:
+                  type: string
+                  pattern: '^\d{4}-\d{2}-\d{2}$'
+            required: [kind, cohorts]
+      required: [startDate, status, auditTrail, cohorts, alerts]
+    NewsletterFunnelReport:
+      type: object
+      properties:
+        reportAsOf:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/NewsletterFunnelCoverage"
+        native:
+          type: object
+          properties:
+            rows:
+              type: array
+              items:
+                $ref: "#/components/schemas/NewsletterFunnelRow"
+            comparison:
+              $ref: "#/components/schemas/NewsletterFunnelComparison"
+          required: [rows, comparison]
+        historical:
+          type: object
+          properties:
+            rows:
+              type: array
+              items:
+                $ref: "#/components/schemas/NewsletterFunnelRow"
+          required: [rows]
+      required: [reportAsOf, coverage, native, historical]
     AdminLoginInput:
       type: object
       properties:

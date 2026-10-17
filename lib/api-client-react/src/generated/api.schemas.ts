@@ -9,13 +9,24 @@ export interface HealthStatus {
   status: string;
 }
 
+export type UploadRequestContentType = typeof UploadRequestContentType[keyof typeof UploadRequestContentType];
+
+
+export const UploadRequestContentType = {
+  'video/mp4': 'video/mp4',
+  'video/quicktime': 'video/quicktime',
+  'image/png': 'image/png',
+} as const;
+
 export interface UploadRequest {
   /** @minLength 1 */
   name: string;
-  /** @minimum 1 */
+  /**
+     * @minimum 1
+     * @maximum 524288000
+     */
   size: number;
-  /** @minLength 1 */
-  contentType: string;
+  contentType: UploadRequestContentType;
 }
 
 export interface UploadResponse {
@@ -72,7 +83,71 @@ export interface SubmissionInput {
   processingError?: string | null;
 }
 
+export type AdminContestantStatus = typeof AdminContestantStatus[keyof typeof AdminContestantStatus];
+
+
+export const AdminContestantStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  needs_edit: 'needs_edit',
+  rejected: 'rejected',
+} as const;
+
+export interface AdminContestant {
+  id: number;
+  ownerName: string;
+  dogName: string;
+  email: string;
+  phone: string;
+  submittedAt: string;
+  status: AdminContestantStatus;
+}
+
+export interface AdminContestantsPage {
+  records: AdminContestant[];
+  /** @nullable */
+  nextCursor: string | null;
+}
+
+export interface ReviewQueueEntry {
+  id: number;
+  dogName: string;
+  ownerName: string;
+  trickName: string;
+  status: SubmissionStatus;
+}
+
+export interface ReviewQueuePage {
+  records: ReviewQueueEntry[];
+  /** @nullable */
+  nextCursor: number | null;
+}
+
+export type SubmissionSoundtrack = typeof SubmissionSoundtrack[keyof typeof SubmissionSoundtrack];
+
+
+export const SubmissionSoundtrack = {
+  replace_music: 'replace_music',
+  voiceover_only: 'voiceover_only',
+} as const;
+
+export type SubmissionCategory = typeof SubmissionCategory[keyof typeof SubmissionCategory];
+
+
+export const SubmissionCategory = {
+  contest: 'contest',
+  just_for_fun: 'just_for_fun',
+  unclassified: 'unclassified',
+} as const;
+
 export interface Submission {
+  soundtrack?: SubmissionSoundtrack;
+  category?: SubmissionCategory;
+  /** @nullable */
+  sourceCredit?: string | null;
+  /** @nullable */
+  sourceUrl?: string | null;
+  prizeEligible?: boolean;
   id: number;
   ownerName: string;
   email: string;
@@ -135,7 +210,37 @@ export interface Submission {
   updatedAt: string;
 }
 
+export type SubmissionUpdateSoundtrack = typeof SubmissionUpdateSoundtrack[keyof typeof SubmissionUpdateSoundtrack];
+
+
+export const SubmissionUpdateSoundtrack = {
+  replace_music: 'replace_music',
+  voiceover_only: 'voiceover_only',
+} as const;
+
+export type SubmissionUpdateCategory = typeof SubmissionUpdateCategory[keyof typeof SubmissionUpdateCategory];
+
+
+export const SubmissionUpdateCategory = {
+  contest: 'contest',
+  just_for_fun: 'just_for_fun',
+  unclassified: 'unclassified',
+} as const;
+
 export interface SubmissionUpdate {
+  soundtrack?: SubmissionUpdateSoundtrack;
+  category?: SubmissionUpdateCategory;
+  /**
+     * @maxLength 200
+     * @nullable
+     */
+  sourceCredit?: string | null;
+  /**
+     * @maxLength 2000
+     * @nullable
+     * @pattern ^https?://
+     */
+  sourceUrl?: string | null;
   status?: SubmissionStatus;
   /** @nullable */
   punchline?: string | null;
@@ -151,7 +256,22 @@ export interface SubmissionUpdate {
   trimEndSeconds?: number | null;
 }
 
+export type ShowcaseEntryCategory = typeof ShowcaseEntryCategory[keyof typeof ShowcaseEntryCategory];
+
+
+export const ShowcaseEntryCategory = {
+  contest: 'contest',
+  just_for_fun: 'just_for_fun',
+  unclassified: 'unclassified',
+} as const;
+
 export interface ShowcaseEntry {
+  category?: ShowcaseEntryCategory;
+  /** @nullable */
+  sourceCredit?: string | null;
+  /** @nullable */
+  sourceUrl?: string | null;
+  prizeEligible?: boolean;
   id: number;
   dogName: string;
   /** @nullable */
@@ -165,6 +285,7 @@ export interface ShowcaseEntry {
   voiceoverObjectPath?: string | null;
   /** @nullable */
   punchline?: string | null;
+  /** First showcase publication time, preserved through edits and reprocessing. The epoch (1970-01-01T00:00:00Z) denotes an unknown historical publication date; ties sort by descending submission ID. */
   publishedAt: string;
   likeCount: number;
 }
@@ -206,6 +327,172 @@ export interface DashboardSummary {
   rejected: number;
 }
 
+export type WelcomeEmailAdminStatus = typeof WelcomeEmailAdminStatus[keyof typeof WelcomeEmailAdminStatus];
+
+
+export const WelcomeEmailAdminStatus = {
+  active_claim: 'active_claim',
+  expired_claim: 'expired_claim',
+  failed: 'failed',
+  permanently_failed: 'permanently_failed',
+} as const;
+
+export interface WelcomeEmailAdminRecord {
+  id: number;
+  email: string;
+  status: WelcomeEmailAdminStatus;
+  /** @nullable */
+  claimedAt: string | null;
+  /** @nullable */
+  failedAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+  attemptCount: number;
+}
+
+export type WelcomeEmailRecoveryState = typeof WelcomeEmailRecoveryState[keyof typeof WelcomeEmailRecoveryState];
+
+
+export const WelcomeEmailRecoveryState = {
+  clear: 'clear',
+  healthy: 'healthy',
+  attention: 'attention',
+} as const;
+
+export interface WelcomeEmailAdminBacklog {
+  retryableCount: number;
+  /** @nullable */
+  oldestRetryAt: string | null;
+  /** @nullable */
+  oldestRetryAgeMinutes: number | null;
+  repeatedFailureCount: number;
+  state: WelcomeEmailRecoveryState;
+}
+
+export interface WelcomeEmailAdminRecordsPage {
+  records: WelcomeEmailAdminRecord[];
+  /** @nullable */
+  nextCursor: string | null;
+  backlog: WelcomeEmailAdminBacklog;
+}
+
+export interface DeferredConfirmationAdminStatus {
+  /** Number of pending confirmation attempts currently inside their persisted retry window */
+  deferredCount: number;
+  /**
+     * Earliest persisted retry time among currently deferred confirmation attempts
+     * @nullable
+     */
+  nextRetryAt: string | null;
+}
+
+export type NewsletterFunnelSource = typeof NewsletterFunnelSource[keyof typeof NewsletterFunnelSource];
+
+
+export const NewsletterFunnelSource = {
+  initial: 'initial',
+  replacement: 'replacement',
+} as const;
+
+export interface NewsletterFunnelRow {
+  source: NewsletterFunnelSource;
+  requests: number;
+  confirmations: number;
+  /** @nullable */
+  conversionRatePercent: number | null;
+  /** @nullable */
+  ci95LowerPercent: number | null;
+  /** @nullable */
+  ci95UpperPercent: number | null;
+}
+
+export interface NewsletterFunnelComparison {
+  result: string;
+  /** @nullable */
+  liftPoints: number | null;
+  /** @nullable */
+  liftCi95LowerPoints: number | null;
+  /** @nullable */
+  liftCi95UpperPoints: number | null;
+}
+
+export type NewsletterFunnelCoverageCohortCoverageStatus = typeof NewsletterFunnelCoverageCohortCoverageStatus[keyof typeof NewsletterFunnelCoverageCohortCoverageStatus];
+
+
+export const NewsletterFunnelCoverageCohortCoverageStatus = {
+  coverage_unavailable: 'coverage_unavailable',
+  missing_coverage: 'missing_coverage',
+  zero_requests: 'zero_requests',
+  covered: 'covered',
+} as const;
+
+export interface NewsletterFunnelCoverageCohort {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  cohort: string;
+  coverageStatus: NewsletterFunnelCoverageCohortCoverageStatus;
+  requests: number;
+}
+
+export type NewsletterFunnelCoverageStatus = typeof NewsletterFunnelCoverageStatus[keyof typeof NewsletterFunnelCoverageStatus];
+
+
+export const NewsletterFunnelCoverageStatus = {
+  recorded: 'recorded',
+  unavailable: 'unavailable',
+} as const;
+
+export type NewsletterFunnelCoverageAuditTrailItem = {
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  coverageStartDate: string | null;
+  /** @minLength 1 */
+  reason: string;
+};
+
+export type NewsletterFunnelCoverageAlertsItemKind = typeof NewsletterFunnelCoverageAlertsItemKind[keyof typeof NewsletterFunnelCoverageAlertsItemKind];
+
+
+export const NewsletterFunnelCoverageAlertsItemKind = {
+  missing_events: 'missing_events',
+  coverage_regression: 'coverage_regression',
+} as const;
+
+export type NewsletterFunnelCoverageAlertsItem = {
+  kind: NewsletterFunnelCoverageAlertsItemKind;
+  /** @items.pattern ^\d{4}-\d{2}-\d{2}$ */
+  cohorts: string[];
+};
+
+export interface NewsletterFunnelCoverage {
+  /**
+     * @nullable
+     * @pattern ^\d{4}-\d{2}-\d{2}$
+     */
+  startDate: string | null;
+  status: NewsletterFunnelCoverageStatus;
+  auditTrail: NewsletterFunnelCoverageAuditTrailItem[];
+  cohorts: NewsletterFunnelCoverageCohort[];
+  alerts: NewsletterFunnelCoverageAlertsItem[];
+}
+
+export type NewsletterFunnelReportNative = {
+  rows: NewsletterFunnelRow[];
+  comparison: NewsletterFunnelComparison;
+};
+
+export type NewsletterFunnelReportHistorical = {
+  rows: NewsletterFunnelRow[];
+};
+
+export interface NewsletterFunnelReport {
+  reportAsOf: string;
+  coverage: NewsletterFunnelCoverage;
+  native: NewsletterFunnelReportNative;
+  historical: NewsletterFunnelReportHistorical;
+}
+
 export interface AdminLoginInput {
   /** @minLength 1 */
   password: string;
@@ -216,8 +503,34 @@ export interface AdminSession {
 }
 
 export type ListSubmissionsParams = {
+category?: ListSubmissionsCategory;
+/**
+ * Review-only case-insensitive literal substring across dog, owner, OR trick name. After trimming whitespace, use at least 3 Unicode characters or leave blank to browse. Short nonblank searches return 400 before querying the archive.
+ * @maxLength 200
+ */
+search?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Exclusive entry ID boundary, newest IDs first.
+ * @minimum 1
+ * @maximum 2147483647
+ */
+cursor?: number;
 status?: SubmissionStatus;
 };
+
+export type ListSubmissionsCategory = typeof ListSubmissionsCategory[keyof typeof ListSubmissionsCategory];
+
+
+export const ListSubmissionsCategory = {
+  contest: 'contest',
+  just_for_fun: 'just_for_fun',
+  unclassified: 'unclassified',
+} as const;
 
 export type VerifySubscriberParams = {
 token: string;
@@ -225,5 +538,36 @@ token: string;
 
 export type UnsubscribeSubscriberParams = {
 token: string;
+};
+
+export type GetAdminContestantsParams = {
+/**
+ * Case-insensitive substring of owner name, dog name or email
+ * @maxLength 100
+ */
+search?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Return submissions with IDs less than this ID
+ * @pattern ^[1-9][0-9]*$
+ */
+cursor?: string;
+};
+
+export type GetWelcomeEmailAdminRecordsParams = {
+/**
+ * Maximum number of operational welcome email records to return
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Return records after this page cursor
+ */
+cursor?: string;
 };
 

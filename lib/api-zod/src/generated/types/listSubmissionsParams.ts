@@ -5,8 +5,26 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ListSubmissionsCategory } from './listSubmissionsCategory';
 import type { SubmissionStatus } from './submissionStatus';
 
 export type ListSubmissionsParams = {
+category?: ListSubmissionsCategory;
+/**
+ * Review-only case-insensitive literal substring across dog, owner, OR trick name. After trimming whitespace, use at least 3 Unicode characters or leave blank to browse. Short nonblank searches return 400 before querying the archive.
+ * @maxLength 200
+ */
+search?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Exclusive entry ID boundary, newest IDs first.
+ * @minimum 1
+ * @maximum 2147483647
+ */
+cursor?: number;
 status?: SubmissionStatus;
 };

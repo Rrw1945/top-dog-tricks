@@ -5,12 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { UploadRequestContentType } from './uploadRequestContentType';
 
 export interface UploadRequest {
   /** @minLength 1 */
   name: string;
-  /** @minimum 1 */
+  /**
+     * @minimum 1
+     * @maximum 524288000
+     */
   size: number;
-  /** @minLength 1 */
-  contentType: string;
+  contentType: UploadRequestContentType;
 }

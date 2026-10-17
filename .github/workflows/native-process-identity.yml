@@ -5,8 +5,16 @@ on:
     paths:
       - ".github/workflows/native-process-identity.yml"
       - ".github/workflows/frontend-typecheck-refresh.yml"
+      - "artifacts/api-server/package.json"
+      - "artifacts/api-server/src/lib/httpShutdown.test.ts"
+      - "artifacts/api-server/src/lib/httpShutdown.ts"
+      - "artifacts/api-server/test.mjs"
       - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "scripts/check-api-typecheck-rebuilds-db.mjs"
+      - "scripts/api-typecheck-failure-report*.mjs"
+      - "scripts/check-native-transition-interruption.test.mjs"
       - "scripts/check-node-support-matrix.mjs"
       - "scripts/check-node-support-matrix.test.mjs"
   push:
@@ -15,8 +23,16 @@ on:
     paths:
       - ".github/workflows/native-process-identity.yml"
       - ".github/workflows/frontend-typecheck-refresh.yml"
+      - "artifacts/api-server/package.json"
+      - "artifacts/api-server/src/lib/httpShutdown.test.ts"
+      - "artifacts/api-server/src/lib/httpShutdown.ts"
+      - "artifacts/api-server/test.mjs"
       - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - "scripts/check-api-typecheck-rebuilds-db.mjs"
+      - "scripts/api-typecheck-failure-report*.mjs"
+      - "scripts/check-native-transition-interruption.test.mjs"
       - "scripts/check-node-support-matrix.mjs"
       - "scripts/check-node-support-matrix.test.mjs"
   schedule:
@@ -31,6 +47,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Keep these rows aligned with nativeProcessCoverage in
+          # scripts/check-node-support-matrix.mjs.
           - host: macOS
             os: macos-latest
             node: 22
@@ -44,9 +62,11 @@ jobs:
             os: windows-latest
             node: 24
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 15
     env:
       API_TYPECHECK_NATIVE_TEST_HOST: ${{ matrix.host }}
+      # Separate from native diagnostics and from every other run/matrix row.
+      API_TYPECHECK_FAILURE_REPORT_DIR: ${{ github.workspace }}/generated-artifacts/api-typecheck-failures/native-${{ github.run_id }}-${{ github.run_attempt }}-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -62,18 +82,54 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} stale lock takeover
+          cache: pnpm
+      - name: Install API test dependencies
+        run: pnpm install --filter '@workspace/api-server...' --frozen-lockfile
+      - name: Verify failure report publication on ${{ matrix.host }} Node.js ${{ matrix.node }}
+        id: failure-report-tests
+        run: node --test scripts/api-typecheck-failure-report.test.mjs scripts/api-typecheck-failure-report-workflows.test.mjs
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} forced HTTP socket count and closure
+        id: http-shutdown-socket-count
+        env:
+          API_TEST_FILE: src/lib/httpShutdown.test.ts
+        run: pnpm --filter @workspace/api-server test
+      # The native probe runs three replacement-owner races, verifying that a
+      # later contender cannot reclaim the live replacement on each host/runtime.
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} stale lock takeover and 3 transition-lock replacement races
         id: native-process-identity
-        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/native.json"
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} transition-lock owner exit recovery
+        id: native-process-identity-transition-exit
+        env:
+          API_TYPECHECK_NATIVE_TRANSITION_EXIT_ITERATIONS: "3"
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-transition-exit --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/native-transition-exit.json"
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} interrupted owner cleanup
+        id: native-transition-interruption
+        run: node --test scripts/check-native-transition-interruption.test.mjs
       - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} frozen probe timeout
         id: native-process-identity-timeout
-        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-timeout
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-timeout --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/native-timeout.json"
       - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} frozen probe descendant cleanup
         id: native-process-identity-descendant-lifecycle
-        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-descendant-lifecycle
-      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} PID-reuse recovery safety
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:native-descendant-lifecycle --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/native-descendant-lifecycle.json"
+      - name: Verify ${{ matrix.host }} Node.js ${{ matrix.node }} PID-reuse recovery safety and atomic recovery and collector diagnostics
         id: native-process-identity-recovery
-        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:recovery
+        env:
+          API_TYPECHECK_NATIVE_RECOVERY_DIAGNOSTICS_FILE: ${{ runner.temp }}/native-process-diagnostics/pid-reuse-recovery-batch.json
+        run: pnpm run check:api-typecheck-rebuilds-libs:process-identity:recovery --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/recovery.json"
+      - name: Validate scheduled PID-reuse recovery record
+        if: ${{ github.event_name == 'schedule' && steps.native-process-identity-recovery.outcome == 'success' }}
+        id: native-process-identity-recovery-record
+        env:
+          API_TYPECHECK_NATIVE_RECOVERY_DIAGNOSTICS_FILE: ${{ runner.temp }}/native-process-diagnostics/pid-reuse-recovery-batch.json
+        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --verify-native-process-recovery-diagnostics --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/verify-recovery-diagnostics.json"
+      - name: Verify Windows interrupted publication recovery
+        if: ${{ matrix.os == 'windows-latest' }}
+        id: interrupted-publication-recovery
+        env:
+          API_TYPECHECK_INTERRUPTED_PUBLICATION_RUNS: "3"
+          API_TYPECHECK_INTERRUPTED_PUBLICATION_CRASH_POINTS: "staging,active,restore"
+        run: pnpm run check:api-typecheck-rebuilds-libs:interrupted-publication --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/interrupted-publication.json"
       - name: Record failed native probe before diagnostics collection
         if: ${{ failure() && github.event_name == 'schedule' }}
         continue-on-error: true
@@ -82,22 +138,48 @@ jobs:
             ${{ steps.node-support-matrix-tests.outcome == 'failure' && 'node-support-matrix-tests' ||
                 steps.node-support-matrix-contract.outcome == 'failure' && 'node-support-matrix-contract' ||
                 steps.native-process-identity.outcome == 'failure' && 'stale-lock-takeover' ||
+                steps.native-process-identity-transition-exit.outcome == 'failure' && 'transition-lock-owner-exit' ||
                 steps.native-process-identity-timeout.outcome == 'failure' && 'frozen-probe-timeout' ||
                 steps.native-process-identity-descendant-lifecycle.outcome == 'failure' && 'frozen-probe-descendant-cleanup' ||
-                steps.native-process-identity-recovery.outcome == 'failure' && 'pid-reuse-recovery' ||
+                steps.native-process-identity-recovery.outcome == 'failure' && 'pid-reuse-recovery-batch' ||
+                steps.native-process-identity-recovery-record.outcome == 'failure' && 'pid-reuse-recovery-record-validation' ||
+                steps.interrupted-publication-recovery.outcome == 'failure' && 'windows-interrupted-publication' ||
                 'unknown' }}
-        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --record-native-process-probe-failure
+          API_TYPECHECK_NATIVE_PROBE_PHASE: >-
+            ${{ steps.native-process-identity.outcome == 'failure' &&
+                steps.native-process-identity.outputs.phase ||
+                'not-applicable' }}
+        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --record-native-process-probe-failure --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/record-probe-failure.json"
       - name: Collect hosted-runner diagnostics after scheduled failure
+        # Probes have exited before collection removes abandoned recovery staging files.
         if: ${{ failure() && github.event_name == 'schedule' }}
         continue-on-error: true
         env:
           API_TYPECHECK_NATIVE_DIAGNOSTICS_DIR: ${{ runner.temp }}/native-process-diagnostics
-        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --collect-native-process-diagnostics
+        run: pnpm exec node ./scripts/check-api-typecheck-rebuilds-db.mjs --collect-native-process-diagnostics --failure-report "${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/collect-diagnostics.json"
       - name: Upload hosted-runner diagnostics
         if: ${{ failure() && github.event_name == 'schedule' }}
         uses: actions/upload-artifact@v4
         with:
           name: native-process-diagnostics-${{ matrix.os }}-node-${{ matrix.node }}
           path: ${{ runner.temp }}/native-process-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload successful weekly recovery record
+        id: native-process-identity-recovery-upload
+        if: ${{ success() && github.event_name == 'schedule' && steps.native-process-identity-recovery-record.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-process-recovery-record-${{ matrix.os }}-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/native-process-diagnostics/pid-reuse-recovery-batch.json
+          if-no-files-found: error
+          retention-days: 28
+      - name: Upload API typecheck failure reports
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-typecheck-failures-native-${{ github.run_id }}-${{ github.run_attempt }}-process-identity-${{ matrix.os }}-node-${{ matrix.node }}
+          path: ${{ env.API_TYPECHECK_FAILURE_REPORT_DIR }}/*.json
           if-no-files-found: ignore
           retention-days: 14

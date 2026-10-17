@@ -6,8 +6,23 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SubmissionStatus } from './submissionStatus';
+import type { SubmissionUpdateCategory } from './submissionUpdateCategory';
+import type { SubmissionUpdateSoundtrack } from './submissionUpdateSoundtrack';
 
 export interface SubmissionUpdate {
+  soundtrack?: SubmissionUpdateSoundtrack;
+  category?: SubmissionUpdateCategory;
+  /**
+     * @maxLength 200
+     * @nullable
+     */
+  sourceCredit?: string | null;
+  /**
+     * @maxLength 2000
+     * @nullable
+     * @pattern ^https?://
+     */
+  sourceUrl?: string | null;
   status?: SubmissionStatus;
   /** @nullable */
   punchline?: string | null;

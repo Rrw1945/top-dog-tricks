@@ -1,3 +1,4 @@
+import { storedObjectRouteSuffix } from '@/lib/utils';
 import { ArrowRight, CheckCircle2, CircleHelp, Film, Mail, Play, ShieldCheck, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, type FieldErrors, type Resolver } from 'react-hook-form';
@@ -37,7 +38,11 @@ export default function Home() {
   const form = useForm<FormValues>({ resolver: zod4Resolver(schema), defaultValues: { ownerName: '', email: '', dogName: '', trickDescription: '' } });
 
   async function upload(file: File) {
-    const response = await requestUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType: file.type } });
+    const contentType = file.type;
+    if (contentType !== 'video/mp4' && contentType !== 'video/quicktime' && contentType !== 'image/png') {
+      throw new Error('Upload an MP4 or MOV video and a PNG signature');
+    }
+    const response = await requestUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType } });
     const result = await fetch(response.uploadURL, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
     if (!result.ok) throw new Error(`Upload failed (${result.status})`);
     return response.objectPath;
@@ -272,7 +277,8 @@ export function NewsletterSignup() {
   );
 }
 
-function useStoredMedia(path: string) {
+function useStoredMedia(objectPath: string) {
+  const path = storedObjectRouteSuffix(objectPath);
   const result = useGetStoredObject(path, { query: { queryKey: getGetStoredObjectQueryKey(path), enabled: Boolean(path) } });
   const [url, setUrl] = useState('');
   useEffect(() => { if (!result.data) return; const next = URL.createObjectURL(result.data); setUrl(next); return () => URL.revokeObjectURL(next); }, [result.data]);

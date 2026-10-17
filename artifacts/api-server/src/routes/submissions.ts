@@ -1,5 +1,6 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
+import { requireFirstContestOpen } from "../lib/firstContest";
 import {
   CreateSubmissionBody,
   CreateSubmissionResponse,
@@ -8,8 +9,6 @@ import {
   GetDashboardSummaryResponse,
   GetSubmissionParams,
   GetSubmissionResponse,
-  ListSubmissionsQueryParams,
-  ListSubmissionsResponse,
   ListShowcaseEntriesResponse,
   UpdateSubmissionBody,
   UpdateSubmissionParams,
@@ -23,6 +22,7 @@ import {
   videoLikesTable,
 } from "@workspace/db";
 import { isAdminAuthenticated } from "../lib/adminSession";
+import { listReviewQueue } from "./reviewQueue";
 import {
   getPublicBaseUrl,
   sendSlackPreview,
@@ -32,8 +32,12 @@ import {
 } from "../lib/integrations";
 import { processSubmissionMedia } from "../lib/mediaProcessing";
 import { analyzeSubmissionVideo } from "../lib/videoAnalysis";
-import { sendSpotlightNotification } from "../lib/subscriberEmail";
+import { sendSpotlightNotification, sendSubmissionReceipt } from "../lib/subscriberEmail";
 import { createUnsubscribeToken } from "../lib/subscriberTokens";
+import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
+import { InvalidUploadError, validateUploadMetadata } from "../lib/uploadValidation";
+import { withEntryUploads, reserveEntryCopies } from "../lib/entryUploadRegistry";
+import { captureSubmissionOrigin } from "../lib/submissionOrigin";
 
 const router: IRouter = Router();
 const ANALYSIS_LEASE_MS = 20 * 60 * 1_000;
@@ -267,6 +271,27 @@ async function syncSubmissionAutomation(
     );
 }
 
+export function startSubmissionSideEffects(
+  submission: Pick<typeof submissionsTable.$inferSelect, "id" | "email" | "ownerName" | "dogName">,
+  publicBaseUrl: string,
+  logFailure: (error: unknown, submissionId: number, message: string) => void,
+  dependencies = {
+    sendReceipt: sendSubmissionReceipt,
+    syncAutomation: syncSubmissionAutomation,
+  },
+): void {
+  void Promise.resolve()
+    .then(() => dependencies.sendReceipt(submission, publicBaseUrl))
+    .catch((error) => {
+      logFailure(error, submission.id, "Submission receipt email delivery failed");
+    });
+  void Promise.resolve()
+    .then(() => dependencies.syncAutomation(submission.id, publicBaseUrl))
+    .catch((error) => {
+      logFailure(error, submission.id, "Submission automation failed unexpectedly");
+    });
+}
+
 async function notifySpotlightSubscribers(
   submission: typeof submissionsTable.$inferSelect,
   publicBaseUrl: string,
@@ -468,33 +493,56 @@ async function runApprovedProduction(
   }
 }
 
-router.post("/submissions", async (req, res): Promise<void> => {
+export function createSubmissionHandler(startSideEffects = startSubmissionSideEffects, useUploads = withEntryUploads, reserveCopies = reserveEntryCopies) {
+  return async (req: Request, res: Response): Promise<void> => {
   const parsed = CreateSubmissionBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Missing or invalid submission fields" });
     return;
   }
 
-  const [submission] = await db
-    .insert(submissionsTable)
-    .values({
-      ...parsed.data,
+  let videoObjectPath: string;
+  let signatureObjectPath: string;
+  let submission: typeof submissionsTable.$inferSelect;
+  try {
+    const destinations = await reserveCopies();
+    submission = await useUploads([parsed.data.videoObjectPath, parsed.data.signatureObjectPath, ...destinations], async tx => {
+    const storage = new ObjectStorageService();
+    validateUploadMetadata({ name: parsed.data.videoFileName, contentType: parsed.data.videoContentType, size: 1 });
+    const video = await storage.validateEntryUpload(parsed.data.videoObjectPath, "video", parsed.data.videoContentType);
+    const signature = await storage.validateEntryUpload(parsed.data.signatureObjectPath, "signature");
+    videoObjectPath = await storage.preserveEntryUpload(video, destinations[0]);
+    signatureObjectPath = await storage.preserveEntryUpload(signature, destinations[1]);
+    const [saved] = await tx.insert(submissionsTable).values({
+      ...parsed.data, videoObjectPath, signatureObjectPath,
+      websiteOrigin: captureSubmissionOrigin(),
+      category: "contest",
       breedBio: parsed.data.breedBio ?? null,
       phone: parsed.data.phone?.trim() ?? "",
-      trickName:
-        parsed.data.trickName?.trim() ||
-        deriveTrickName(parsed.data.trickDescription),
-    })
-    .returning();
+      trickName: parsed.data.trickName?.trim() || deriveTrickName(parsed.data.trickDescription),
+    }).returning();
+    return saved;
+    });
+  } catch (error) {
+    if (error instanceof InvalidUploadError || error instanceof ObjectNotFoundError ||
+        (error as { code?: number }).code === 404) {
+      res.status(400).json({ error: error instanceof InvalidUploadError ? error.message : "An uploaded file is missing. Please upload it again." });
+    } else {
+      req.log.error({ err: error }, "Unable to verify entry uploads");
+      res.status(503).json({ error: "Unable to verify uploads right now. Please try again." });
+    }
+    return;
+  }
 
   try {
     const publicBaseUrl = getPublicBaseUrl(req.get("host"));
-    void syncSubmissionAutomation(submission.id, publicBaseUrl).catch((error) => {
-      req.log.error(
-        { err: error, submissionId: submission.id },
-        "Submission automation failed unexpectedly",
-      );
-    });
+    startSideEffects(
+      submission,
+      publicBaseUrl,
+      (error, submissionId, message) => {
+        req.log.error({ err: error, submissionId }, message);
+      },
+    );
   } catch (error) {
     req.log.error(
       { err: error, submissionId: submission.id },
@@ -503,30 +551,12 @@ router.post("/submissions", async (req, res): Promise<void> => {
   }
 
   res.status(201).json(CreateSubmissionResponse.parse(submission));
-});
+  };
+}
 
-router.get("/submissions", async (req, res): Promise<void> => {
-  if (!requireAdmin(req, res)) return;
+router.post("/submissions", requireFirstContestOpen, createSubmissionHandler());
 
-  const query = ListSubmissionsQueryParams.safeParse(req.query);
-  if (!query.success) {
-    res.status(400).json({ error: "Invalid submission filter" });
-    return;
-  }
-
-  const rows = query.data.status
-    ? await db
-        .select()
-        .from(submissionsTable)
-        .where(eq(submissionsTable.status, query.data.status))
-        .orderBy(desc(submissionsTable.submittedAt))
-    : await db
-        .select()
-        .from(submissionsTable)
-        .orderBy(desc(submissionsTable.submittedAt));
-
-  res.json(ListSubmissionsResponse.parse(rows));
-});
+router.get("/submissions", listReviewQueue);
 
 router.get("/submissions/:id", async (req, res): Promise<void> => {
   if (!requireAdmin(req, res)) return;
@@ -547,7 +577,7 @@ router.get("/submissions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(GetSubmissionResponse.parse(submission));
+  res.json(GetSubmissionResponse.parse({ ...submission, prizeEligible: submission.category === "contest" }));
 });
 
 router.post("/submissions/:id/analyze", async (req, res): Promise<void> => {
@@ -707,18 +737,19 @@ router.post(
 );
 
 router.get("/showcase", async (_req, res): Promise<void> => {
-  const rows = await db
+  const candidates = await db
     .select({
       id: submissionsTable.id,
       dogName: submissionsTable.dogName,
+      category: submissionsTable.category,
+      sourceCredit: submissionsTable.sourceCredit,
+      sourceUrl: submissionsTable.sourceUrl,
       breedBio: submissionsTable.breedBio,
       trickName: submissionsTable.trickName,
       trickDescription: submissionsTable.trickDescription,
-      videoObjectPath: submissionsTable.videoObjectPath,
       processedVideoObjectPath: submissionsTable.processedVideoObjectPath,
-      voiceoverObjectPath: submissionsTable.voiceoverObjectPath,
       punchline: submissionsTable.punchline,
-      publishedAt: submissionsTable.updatedAt,
+      publishedAt: submissionsTable.publishedAt,
     })
     .from(submissionsTable)
     .where(
@@ -728,7 +759,26 @@ router.get("/showcase", async (_req, res): Promise<void> => {
         isNotNull(submissionsTable.processedVideoObjectPath),
       ),
     )
-    .orderBy(desc(submissionsTable.updatedAt));
+    .orderBy(desc(submissionsTable.publishedAt), desc(submissionsTable.id));
+
+  const processedPaths = candidates
+    .map((row) => row.processedVideoObjectPath)
+    .filter((path): path is string => path !== null);
+  const privateAliases = processedPaths.length
+    ? await db.select({
+        videoObjectPath: submissionsTable.videoObjectPath,
+        signatureObjectPath: submissionsTable.signatureObjectPath,
+        voiceoverObjectPath: submissionsTable.voiceoverObjectPath,
+      }).from(submissionsTable).where(or(
+        inArray(submissionsTable.videoObjectPath, processedPaths),
+        inArray(submissionsTable.signatureObjectPath, processedPaths),
+        inArray(submissionsTable.voiceoverObjectPath, processedPaths),
+      ))
+    : [];
+  const privatePaths = new Set(privateAliases.flatMap((row) =>
+    [row.videoObjectPath, row.signatureObjectPath, row.voiceoverObjectPath]));
+  const rows = candidates.filter((row) =>
+    row.processedVideoObjectPath && !privatePaths.has(row.processedVideoObjectPath));
 
   const likeRows = rows.length
     ? await db
@@ -738,7 +788,22 @@ router.get("/showcase", async (_req, res): Promise<void> => {
         .groupBy(videoLikesTable.submissionId)
     : [];
   const likeCounts = new Map(likeRows.map((row) => [row.submissionId, row.likeCount]));
-  res.json(ListShowcaseEntriesResponse.parse(rows.map((row) => ({ ...row, likeCount: likeCounts.get(row.id) ?? 0 }))));
+  res.json(ListShowcaseEntriesResponse.parse(rows.map((row) => ({
+    id: row.id,
+    dogName: row.dogName,
+    category: row.category,
+    sourceCredit: row.sourceCredit,
+    sourceUrl: row.sourceUrl,
+    prizeEligible: row.category === "contest",
+    breedBio: row.breedBio,
+    trickName: row.trickName,
+    trickDescription: row.trickDescription,
+    videoObjectPath: row.processedVideoObjectPath,
+    processedVideoObjectPath: row.processedVideoObjectPath,
+    punchline: row.punchline,
+    publishedAt: row.publishedAt ?? new Date(0),
+    likeCount: likeCounts.get(row.id) ?? 0,
+  }))));
 });
 
 router.patch("/submissions/:id", async (req, res): Promise<void> => {
@@ -782,6 +847,10 @@ router.patch("/submissions/:id", async (req, res): Promise<void> => {
       current.processingStatus === "failed" ||
       current.processedVideoObjectPath === null);
   const updates = {
+    ...(body.data.soundtrack !== undefined ? { soundtrack: body.data.soundtrack } : {}),
+    ...(body.data.category !== undefined ? { category: body.data.category } : {}),
+    ...(body.data.sourceCredit !== undefined ? { sourceCredit: body.data.sourceCredit?.trim() || null } : {}),
+    ...(body.data.sourceUrl !== undefined ? { sourceUrl: body.data.sourceUrl } : {}),
     ...(body.data.status !== undefined ? { status: body.data.status } : {}),
     ...(body.data.punchline !== undefined
       ? { punchline: body.data.punchline }
@@ -837,7 +906,7 @@ router.patch("/submissions/:id", async (req, res): Promise<void> => {
     });
   }
 
-  res.json(UpdateSubmissionResponse.parse(submission));
+  res.json(UpdateSubmissionResponse.parse({ ...submission, prizeEligible: submission.category === "contest" }));
 });
 
 router.get("/dashboard/summary", async (req, res): Promise<void> => {
